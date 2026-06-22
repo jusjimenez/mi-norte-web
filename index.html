@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <title>MI NORTE</title>
+  <meta name="description" content="Tu brújula personal: prioridades, dinero consciente y calma." />
+  <meta name="theme-color" content="#0f766e" />
+  <link rel="manifest" href="manifest.webmanifest" />
+
+  <!-- iOS: comportarse como app y mostrar ícono al "Añadir a pantalla de inicio" -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="MI NORTE" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Pantalla activa -->
+    <main id="screen" class="screen"></main>
+
+    <!-- Barra de pestañas inferior -->
+    <nav id="tabbar" class="tabbar" aria-label="Secciones">
+      <button class="tab" data-tab="home"       aria-label="Inicio">🧭<span>Inicio</span></button>
+      <button class="tab" data-tab="norte"      aria-label="Mi Norte">🌟<span>Norte</span></button>
+      <button class="tab" data-tab="money"      aria-label="Dinero">💰<span>Dinero</span></button>
+      <button class="tab" data-tab="house"      aria-label="Casa">🏠<span>Casa</span></button>
+      <button class="tab" data-tab="reflection" aria-label="Noche">🌙<span>Noche</span></button>
+      <button class="tab" data-tab="analysis"   aria-label="Análisis">📊<span>Análisis</span></button>
+      <button class="tab" data-tab="settings"   aria-label="Ajustes">⚙️<span>Ajustes</span></button>
+    </nav>
+  </div>
+
+  <!-- Capa para hojas/modales (gasto, crisis, semáforo) -->
+  <div id="sheet-root"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
