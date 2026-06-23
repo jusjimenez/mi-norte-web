@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
   <title>MI NORTE</title>
   <meta name="description" content="Tu brújula personal: prioridades, dinero consciente y calma." />
-  <meta name="theme-color" content="#0f766e" />
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f2f2f7" />
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000" />
   <link rel="manifest" href="manifest.webmanifest" />
 
   <!-- iOS: comportarse como app y mostrar ícono al "Añadir a pantalla de inicio" -->
@@ -23,13 +24,27 @@
 
     <!-- Barra de pestañas inferior -->
     <nav id="tabbar" class="tabbar" aria-label="Secciones">
-      <button class="tab" data-tab="home"       aria-label="Inicio">🧭<span>Inicio</span></button>
-      <button class="tab" data-tab="norte"      aria-label="Mi Norte">🌟<span>Norte</span></button>
-      <button class="tab" data-tab="money"      aria-label="Dinero">💰<span>Dinero</span></button>
-      <button class="tab" data-tab="house"      aria-label="Casa">🏠<span>Casa</span></button>
-      <button class="tab" data-tab="reflection" aria-label="Noche">🌙<span>Noche</span></button>
-      <button class="tab" data-tab="analysis"   aria-label="Análisis">📊<span>Análisis</span></button>
-      <button class="tab" data-tab="settings"   aria-label="Ajustes">⚙️<span>Ajustes</span></button>
+      <button class="tab" data-tab="home" aria-label="Inicio">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15.6 8.4 11 11 8.4 15.6 13 13 Z" fill="currentColor" stroke="none"/></svg>
+        <span>Inicio</span></button>
+      <button class="tab" data-tab="norte" aria-label="Mi Norte">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3.2 14.5 8.7 20.5 9.3 16 13.3 17.4 19.2 12 16 6.6 19.2 8 13.3 3.5 9.3 9.5 8.7 Z"/></svg>
+        <span>Norte</span></button>
+      <button class="tab" data-tab="money" aria-label="Dinero">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="6" width="18" height="12.5" rx="2.4"/><path d="M3 10h18" stroke-width="1.6"/><circle cx="16.5" cy="14.2" r="1.2" fill="currentColor" stroke="none"/></svg>
+        <span>Dinero</span></button>
+      <button class="tab" data-tab="house" aria-label="Casa">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3.5 11 12 4l8.5 7"/><path d="M5.5 9.6V19.5h13V9.6"/></svg>
+        <span>Casa</span></button>
+      <button class="tab" data-tab="reflection" aria-label="Noche">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M20.5 14.8A8.2 8.2 0 1 1 9.2 3.5 6.4 6.4 0 0 0 20.5 14.8Z"/></svg>
+        <span>Noche</span></button>
+      <button class="tab" data-tab="analysis" aria-label="Análisis">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 20V11"/><path d="M10 20V5"/><path d="M16 20v-6"/></svg>
+        <span>Análisis</span></button>
+      <button class="tab" data-tab="settings" aria-label="Ajustes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.2 5.2l2.1 2.1M16.7 16.7l2.1 2.1M18.8 5.2l-2.1 2.1M5.2 18.8l2.1-2.1" stroke-linecap="round"/></svg>
+        <span>Ajustes</span></button>
     </nav>
   </div>
 

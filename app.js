@@ -124,7 +124,7 @@ SCREENS.home = () => {
   return `
     <div class="head"><h1>MI NORTE</h1><p>Tu brújula para hoy.</p></div>
 
-    <button class="crisis-cta" id="btn-crisis">🆘  NO ESTOY BIEN</button>
+    <button class="crisis-cta" id="btn-crisis">NO ESTOY BIEN</button>
     <div class="spacer"></div>
 
     <div class="card">
@@ -140,7 +140,7 @@ SCREENS.home = () => {
 
     <div class="card">
       <h2>Mis prioridades</h2>
-      <ul class="clean">${prios.map(p => `<li>📍 ${esc(p.title)}</li>`).join("") || `<li class="muted">Configura tus prioridades.</li>`}</ul>
+      <ul class="clean bul">${prios.map(p => `<li><i class="bdot"></i>${esc(p.title)}</li>`).join("") || `<li class="muted">Configura tus prioridades.</li>`}</ul>
     </div>
 
     <div class="card">
@@ -224,7 +224,7 @@ SCREENS.money = () => {
       <h2>Movimientos</h2>
       ${list.length ? list.map(m => `
         <div class="list-item">
-          <div>${m.isIncome ? "🟢" : "🔴"}</div>
+          <span class="mdot ${m.isIncome ? "in" : "out"}"></span>
           <div class="grow">
             <div class="t">${esc(m.note || (m.isIncome ? "Ingreso" : "Gasto"))}</div>
             <div class="s">${new Date(m.date).toLocaleDateString("es-CR")}${m.kind ? " · " + esc(m.kind) : ""}${m.feeling ? " · " + esc(m.feeling) : ""}</div>
@@ -640,7 +640,7 @@ function renderCrisisReasons() {
 function runCrisis(session) {
   let remaining = session.calmMinutes * 60;
   const items = (title, arr) => `
-    <div class="card"><h2>${title}</h2>${arr.length ? `<ul class="clean">${arr.map(x=>`<li>📍 ${esc(x)}</li>`).join("")}</ul>` : `<div class="muted">Sin información todavía.</div>`}</div>`;
+    <div class="card"><h2>${title}</h2>${arr.length ? `<ul class="clean bul">${arr.map(x=>`<li><i class="bdot"></i>${esc(x)}</li>`).join("")}</ul>` : `<div class="muted">Sin información todavía.</div>`}</div>`;
   const prios = DB.priorities.filter(p=>p.active).map(p=>p.title);
   const norte = DB.norte.map(a=>a.answer).filter(Boolean).slice(0,3);
   const metas = activeHouseTasks().slice(0,3).map(t=>t.title);
