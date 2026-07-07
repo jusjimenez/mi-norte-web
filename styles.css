@@ -372,3 +372,37 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--t
   font-size: 16px; color: var(--label-2); cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
 .toolbar .x:active { background: var(--card-press); }
+
+/* ----- Pantalla de inicio (gate mañana/noche) ----- */
+.gate {
+  position: fixed; inset: 0; z-index: 90; color: #fff;
+  display: flex; flex-direction: column;
+  padding: calc(var(--safe-top) + 40px) 26px calc(var(--safe-bottom) + 26px);
+  background: linear-gradient(160deg, var(--tint-2), var(--hero-pos-b) 70%, #052e2b);
+  overflow-y: auto; animation: gatefade .45s ease;
+}
+.gate::before {
+  content: ""; position: absolute; top: -80px; right: -60px; width: 260px; height: 260px;
+  background: radial-gradient(circle, rgba(255,255,255,.16), transparent 70%); pointer-events: none;
+}
+@keyframes gatefade { from { opacity: 0; transform: scale(1.02); } }
+.gate-top { position: relative; }
+.gate-greet { font-size: 26px; font-weight: 800; letter-spacing: 0.2px; }
+.gate-date { font-size: 15px; opacity: .8; margin-top: 2px; text-transform: capitalize; }
+.gate-mid { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 24px 0; }
+.gate-quote { font-size: 27px; font-weight: 700; line-height: 1.32; letter-spacing: -0.2px; }
+.gate-status { margin-top: 18px; font-size: 15px; opacity: .82; font-weight: 500; }
+.gate-bottom { position: relative; }
+.gate-prompt { font-size: 15px; font-weight: 600; opacity: .9; margin-bottom: 12px; text-align: center; }
+.gate-actions { display: flex; gap: 12px; margin-bottom: 12px; }
+.gbtn {
+  appearance: none; border: none; cursor: pointer; font: inherit; font-weight: 700; font-size: 16px;
+  border-radius: 14px; padding: 15px 14px; width: 100%; text-align: center;
+  transition: transform .08s ease, filter .15s, opacity .2s;
+}
+.gbtn:active { transform: scale(.975); }
+.gbtn.expense { background: rgba(255,255,255,.16); color: #fff; -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+.gbtn.income { background: rgba(255,255,255,.16); color: #fff; -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+.gbtn.enter { background: #fff; color: var(--tint-press); }
+.gbtn.enter[disabled] { opacity: .5; cursor: default; }
+@media (prefers-color-scheme: dark) { .gbtn.enter { color: #0b5850; } }

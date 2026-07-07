@@ -25,13 +25,29 @@ const CURRENCIES = [
   { code: "CLP", locale: "es-CL", label: "Peso CL ($)" },
 ];
 
+/* Frases para la pantalla de inicio (rotan por día y franja) */
+const GATE_PHRASES = [
+  "Registrar cada gasto es un acto de amor por tu futuro.",
+  "La claridad de hoy construye la tranquilidad de mañana.",
+  "Cada colón que anotas es un colón que controlas.",
+  "No se trata de gastar menos, sino de decidir mejor.",
+  "Tu constancia vale más que cualquier ingreso extra.",
+  "Lo que se mide, se mejora. Anota y avanza.",
+  "Un minuto registrando hoy te ahorra un dolor de cabeza mañana.",
+  "El orden en tu dinero es paz en tu mente.",
+  "Pequeños registros diarios, grandes decisiones.",
+  "Saber a dónde va tu dinero es saber a dónde vas tú.",
+  "Ahorrar empieza por observar.",
+  "Hoy eliges: dirigir tu dinero, o que él te dirija a ti.",
+];
+
 /* ---------- Semilla ---------- */
 const SEED = {
   transactions: [],   // {id, date(ISO), type:'income'|'expense', amount, category, note}
   categories: structuredClone(DEFAULT_CATEGORIES),
   budgets: {},        // {categoria: limiteMensual}
   recurring: [],      // {id, type, amount, category, note, day}
-  settings: { currency: "CRC", locale: "es-CR", savingsGoal: 20, reminders: true, reminderDismissed: "" },
+  settings: { currency: "CRC", locale: "es-CR", savingsGoal: 20, reminders: true, reminderDismissed: "", gate: true, gateAM: "", gatePM: "" },
 };
 
 /* ---------- Estado / persistencia ---------- */
@@ -518,6 +534,13 @@ SCREENS.settings = () => {
     </div>
 
     <div class="card">
+      <div class="row"><h2 style="margin:0">Pantalla de inicio</h2>
+        <label class="switch"><input type="checkbox" id="s-gate" ${s.gate !== false ? "checked" : ""} /><span class="sl"></span></label>
+      </div>
+      <div class="hint">Una pantalla completa con una frase, en la mañana y en la noche, para invitarte a registrar tus movimientos.</div>
+    </div>
+
+    <div class="card">
       <div class="row"><h2 style="margin:0">Categorías</h2></div>
       <div class="hint">Personaliza tus categorías de gastos e ingresos.</div>
       <div class="gap"></div>
@@ -570,6 +593,9 @@ WIRE.settings = (root) => {
   };
   $("#s-reminders", root).onchange = (e) => {
     DB.settings.reminders = e.target.checked; save(); toast(e.target.checked ? "Recordatorio activado" : "Recordatorio desactivado");
+  };
+  $("#s-gate", root).onchange = (e) => {
+    DB.settings.gate = e.target.checked; save(); toast(e.target.checked ? "Pantalla de inicio activada" : "Pantalla de inicio desactivada");
   };
   $("#s-cat-expense", root).onclick = () => openCategories("expense");
   $("#s-cat-income", root).onclick = () => openCategories("income");
@@ -801,11 +827,89 @@ function exportCSV(rows, name) {
 }
 
 /* ===========================================================
+   PANTALLA DE INICIO (mañana y noche)
+   =========================================================== */
+function currentGateSlot() {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 12) return "am";
+  if (h >= 18 && h < 24) return "pm";
+  return null;
+}
+function gatePhrase(slot) {
+  const start = new Date(new Date().getFullYear(), 0, 0);
+  const day = Math.floor((Date.now() - start) / 86400000);
+  const idx = (day * 2 + (slot === "pm" ? 1 : 0)) % GATE_PHRASES.length;
+  return GATE_PHRASES[idx];
+}
+function maybeShowGate() {
+  if (DB.settings.gate === false) return;
+  if (document.querySelector(".gate")) return;      // ya visible
+  const slot = currentGateSlot();
+  if (!slot) return;
+  const key = todayKeyStr();
+  const field = slot === "am" ? "gateAM" : "gatePM";
+  if (DB.settings[field] === key) return;           // ya se mostró esta franja hoy
+  DB.settings[field] = key; save();
+  renderGate(slot);
+}
+function renderGate(slot) {
+  const loc = DB.settings.locale || "es-CR";
+  const greeting = slot === "am" ? "Buenos días" : "Buenas noches";
+  const dateLabel = new Date().toLocaleDateString(loc, { weekday: "long", day: "numeric", month: "long" });
+  const t = monthTotals(monthKeyOf(new Date()));
+  const registered = registeredToday();
+
+  const el = document.createElement("div");
+  el.className = "gate";
+  el.innerHTML = `
+    <div class="gate-top">
+      <div class="gate-greet">${greeting}</div>
+      <div class="gate-date">${esc(dateLabel)}</div>
+    </div>
+    <div class="gate-mid">
+      <div class="gate-quote">“${esc(gatePhrase(slot))}”</div>
+      <div class="gate-status">${registered
+        ? `✓ Hoy ya registraste movimientos.`
+        : `Aún no registras nada hoy.`}</div>
+    </div>
+    <div class="gate-bottom">
+      <div class="gate-prompt">¿Ya registraste tus movimientos de hoy?</div>
+      <div class="gate-actions">
+        <button class="gbtn expense" id="gate-exp">− Registrar gasto</button>
+        <button class="gbtn income" id="gate-inc">+ Registrar ingreso</button>
+      </div>
+      <button class="gbtn enter" id="gate-enter" disabled>Leer un momento…</button>
+    </div>`;
+  document.body.appendChild(el);
+
+  $("#gate-exp", el).onclick = () => openTx("expense");
+  $("#gate-inc", el).onclick = () => openTx("income");
+
+  const enter = $("#gate-enter", el);
+  let n = 3;
+  const tick = () => { enter.textContent = `Entrar (${n})`; };
+  tick();
+  const iv = setInterval(() => {
+    n--;
+    if (n <= 0) { clearInterval(iv); enter.disabled = false; enter.textContent = "Entrar"; }
+    else tick();
+  }, 1000);
+  enter.onclick = () => { clearInterval(iv); closeGate(); render(); };
+}
+function closeGate() { const g = document.querySelector(".gate"); if (g) g.remove(); }
+
+/* ===========================================================
    ARRANQUE
    =========================================================== */
 $$(".tab").forEach(b => b.onclick = () => { currentTab = b.dataset.tab; render(); });
 window.closeSheet = closeSheet; // usado por onclick inline
 render();
+maybeShowGate();
+
+/* Volver a la app (PWA reanudada) puede abrir la pantalla de inicio si toca otra franja */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") maybeShowGate();
+});
 
 /* Service worker (offline) */
 if ("serviceWorker" in navigator) {
