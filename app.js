@@ -44,12 +44,17 @@ const GATE_PHRASES = [
 
 /* ---------- Semilla ---------- */
 const SEED = {
-  transactions: [],   // {id, date(ISO), type:'income'|'expense', amount, category, note}
+  transactions: [],   // {id, date(ISO), type:'income'|'expense'|'transfer', amount, category, note, ref, account, from, to}
   categories: structuredClone(DEFAULT_CATEGORIES),
   budgets: {},        // {categoria: limiteMensual}
   recurring: [],      // {id, type, amount, category, note, day}
-  settings: { currency: "CRC", locale: "es-CR", savingsGoal: 20, reminders: true, reminderDismissed: "", gate: true, gateAM: "", gatePM: "" },
+  accounts: [],       // {id, name, kind:'efectivo'|'banco'|'tarjeta'|'otro', opening}
+  goals: [],          // {id, name, kind:'ahorro'|'deuda', target, saved}
+  settings: { currency: "CRC", locale: "es-CR", savingsGoal: 20, reminders: true, reminderDismissed: "", gate: true, gateAM: "", gatePM: "", pin: "" },
 };
+
+const ACCOUNT_KINDS = ["efectivo", "banco", "tarjeta", "otro"];
+const ACCOUNT_ICON = { efectivo: "💵", banco: "🏦", tarjeta: "💳", otro: "◆" };
 
 /* ---------- Estado / persistencia ---------- */
 let DB = load();
@@ -73,6 +78,8 @@ function normalize(data) {
   db.settings = Object.assign(structuredClone(SEED.settings), db.settings || {});
   db.transactions = Array.isArray(db.transactions) ? db.transactions : [];
   db.recurring = Array.isArray(db.recurring) ? db.recurring : [];
+  db.accounts = Array.isArray(db.accounts) ? db.accounts : [];
+  db.goals = Array.isArray(db.goals) ? db.goals : [];
   db.budgets = db.budgets && typeof db.budgets === "object" ? db.budgets : {};
   return db;
 }
@@ -201,6 +208,40 @@ function budgetStatus(mk) {
       return { name, limit, spent, pct: Math.min(100, spent / limit * 100), over: spent > limit, color: catColor(name, "expense") };
     })
     .sort((a, b) => b.pct - a.pct);
+}
+
+/* ---- Cuentas ---- */
+function accountsExist() { return DB.accounts.length > 0; }
+function accountName(id) { const a = DB.accounts.find(x => x.id === id); return a ? a.name : ""; }
+function accountBalance(id) {
+  const a = DB.accounts.find(x => x.id === id); if (!a) return 0;
+  let bal = a.opening || 0;
+  DB.transactions.forEach(t => {
+    if (t.type === "income" && t.account === id) bal += t.amount;
+    else if (t.type === "expense" && t.account === id) bal -= t.amount;
+    else if (t.type === "transfer") { if (t.from === id) bal -= t.amount; if (t.to === id) bal += t.amount; }
+  });
+  return bal;
+}
+function netWorth() { return DB.accounts.reduce((s, a) => s + accountBalance(a.id), 0); }
+
+/* ---- Metas / deudas ---- */
+function goalPct(g) {
+  if (!g.target) return 0;
+  return Math.max(0, Math.min(100, (g.saved || 0) / g.target * 100));
+}
+
+/* ---- Búsqueda ---- */
+function txMatches(t, q) {
+  if (!q) return true;
+  const hay = `${t.note || ""} ${t.category || ""} ${t.ref || ""} ${accountName(t.account)} ${accountName(t.from)} ${accountName(t.to)}`.toLowerCase();
+  return hay.includes(q.toLowerCase());
+}
+
+/* ---- PIN ---- */
+async function sha256(str) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 function toast(msg) {
@@ -383,10 +424,13 @@ SCREENS.home = () => {
         </div>`).join("")}
     </div>` : ""}
 
+    ${accountsExist() ? accountsCardHTML() : ""}
+    ${DB.goals.length ? goalsCardHTML() : ""}
+
     <div class="card">
       <div class="row"><h2 style="margin:0">Últimos movimientos</h2><button class="linkbtn" id="h-all">Ver todos</button></div>
       <div class="gap"></div>
-      ${recent.length ? recent.map(txRow).join("") : `<div class="muted">Aún no hay movimientos. Registra el primero arriba.</div>`}
+      ${recent.length ? recent.map(t => txRow(t)).join("") : `<div class="muted">Aún no hay movimientos. Registra el primero arriba.</div>`}
     </div>
   `;
 };
@@ -403,38 +447,77 @@ WIRE.home = (root) => {
   $("#h-expense", root).onclick = () => openTx("expense");
   $("#h-income", root).onclick = () => openTx("income");
   $("#h-all", root).onclick = () => { currentTab = "money"; render(); };
+  const hg = $("#h-goals", root); if (hg) hg.onclick = openGoals;
   wireTxRows(root);
 };
 
-/* Fila de movimiento */
+/* Fila de movimiento (tocar para editar) */
 function txRow(t, opts = {}) {
+  const isTransfer = t.type === "transfer";
   const inc = t.type === "income";
-  const col = catColor(t.category, t.type);
+  const col = isTransfer ? "var(--tint)" : catColor(t.category, t.type);
+  const dstr = new Date(t.date).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short" });
+  let title, sub;
+  if (isTransfer) {
+    title = "Transferencia";
+    sub = `${dstr} · ${esc(accountName(t.from))} → ${esc(accountName(t.to))}`;
+  } else {
+    title = t.note || t.category || (inc ? "Ingreso" : "Gasto");
+    const parts = [dstr, esc(t.category || "Otro")];
+    if (accountsExist() && t.account) parts.push(esc(accountName(t.account)));
+    if (t.ref) parts.push(`N.° ${esc(t.ref)}`);
+    sub = parts.join(" · ");
+  }
+  const icon = isTransfer ? "⇄" : (inc ? "↑" : "↓");
+  const amtCls = isTransfer ? "tr" : (inc ? "in" : "out");
+  const amtTxt = isTransfer ? fmt(t.amount) : `${inc ? "+" : "−"}${fmt(t.amount)}`;
   return `
     <div class="list-item">
-      <span class="mov-ic" style="color:${col}">${inc ? "↑" : "↓"}</span>
-      <div class="grow">
-        <div class="t">${esc(t.note || t.category || (inc ? "Ingreso" : "Gasto"))}</div>
-        <div class="s">${new Date(t.date).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short" })} · ${esc(t.category || "Otro")}${t.ref ? ` · N.° ${esc(t.ref)}` : ""}</div>
+      <button class="mov-ic" style="color:${col}" data-edit-tx="${t.id}" aria-label="Editar">${icon}</button>
+      <div class="grow" data-edit-tx="${t.id}">
+        <div class="t">${esc(title)}</div>
+        <div class="s">${sub}</div>
       </div>
-      <div class="amt ${inc ? "in" : "out"}">${inc ? "+" : "−"}${fmt(t.amount)}</div>
+      <div class="amt ${amtCls}">${amtTxt}</div>
       ${opts.deletable ? `<button class="btn small soft-danger" data-del-tx="${t.id}" aria-label="Eliminar">×</button>` : ""}
     </div>`;
 }
+function editTx(id) {
+  const t = DB.transactions.find(x => x.id === id); if (!t) return;
+  if (t.type === "transfer") openTransfer(id); else openTx(t.type, id);
+}
 function wireTxRows(root) {
-  $$("[data-del-tx]", root).forEach(b => b.onclick = () => {
+  $$("[data-del-tx]", root).forEach(b => b.onclick = (e) => {
+    e.stopPropagation();
     DB.transactions = DB.transactions.filter(t => t.id !== b.dataset.delTx);
     save(); render(); toast("Movimiento eliminado");
   });
+  $$("[data-edit-tx]", root).forEach(el => el.onclick = () => editTx(el.dataset.editTx));
 }
 
 /* ---------------- MOVIMIENTOS ---------------- */
 let moneyFilter = "all"; // all | income | expense
-SCREENS.money = () => {
-  const t = monthTotals(viewMonth);
+let moneySearch = "";
+function movListHTML() {
   let list = txOfMonth(viewMonth).sort((a, b) => new Date(b.date) - new Date(a.date));
   if (moneyFilter !== "all") list = list.filter(x => x.type === moneyFilter);
-
+  if (moneySearch.trim()) list = list.filter(x => txMatches(x, moneySearch.trim()));
+  if (!list.length) return `<div class="muted">No hay movimientos con estos filtros.</div>`;
+  const groups = [];
+  list.forEach(t => { const k = dateInputValue(t.date); let g = groups.find(x => x.k === k); if (!g) { g = { k, items: [] }; groups.push(g); } g.items.push(t); });
+  return groups.map(g => {
+    const net = g.items.reduce((s, t) => s + (t.type === "income" ? t.amount : t.type === "expense" ? -t.amount : 0), 0);
+    const dlabel = new Date(g.items[0].date).toLocaleDateString(DB.settings.locale || "es-CR", { weekday: "short", day: "numeric", month: "short" });
+    return `<div class="day-h"><span>${esc(dlabel)}</span><span class="${net >= 0 ? "in" : "out"}">${net >= 0 ? "+" : "−"}${fmt(Math.abs(net))}</span></div>${g.items.map(t => txRow(t, { deletable: true })).join("")}`;
+  }).join("");
+}
+function renderMovList(root) {
+  const c = $("#mov-list", root || document); if (!c) return;
+  c.innerHTML = movListHTML(); wireTxRows(c);
+}
+SCREENS.money = () => {
+  const t = monthTotals(viewMonth);
+  const canTransfer = DB.accounts.length >= 2;
   return `
     <div class="head"><h1>Movimientos</h1><p>Cada ingreso y gasto, registrado.</p></div>
     ${monthNav()}
@@ -449,7 +532,10 @@ SCREENS.money = () => {
       <button class="btn" id="m-expense">− Gasto</button>
       <button class="btn ghost" id="m-income">+ Ingreso</button>
     </div>
+    ${canTransfer ? `<button class="btn line" id="m-transfer" style="margin-bottom:16px">⇄ Transferencia entre cuentas</button>` : ""}
 
+    <input type="text" id="m-search" placeholder="Buscar por descripción, categoría o comprobante" />
+    <div class="gap"></div>
     <div class="seg" id="m-filter">
       <button data-f="all" class="${moneyFilter === "all" ? "on" : ""}">Todos</button>
       <button data-f="income" class="${moneyFilter === "income" ? "on" : ""}">Ingresos</button>
@@ -457,17 +543,23 @@ SCREENS.money = () => {
     </div>
     <div class="gap"></div>
 
-    <div class="card">
-      ${list.length ? list.map(t => txRow(t, { deletable: true })).join("") : `<div class="muted">No hay movimientos en este mes con este filtro.</div>`}
-    </div>
+    <div class="card"><div id="mov-list"></div></div>
   `;
 };
 WIRE.money = (root) => {
   wireMonthNav(root);
   $("#m-expense", root).onclick = () => openTx("expense");
   $("#m-income", root).onclick = () => openTx("income");
-  $$("#m-filter button", root).forEach(b => b.onclick = () => { moneyFilter = b.dataset.f; render(); });
-  wireTxRows(root);
+  const tr = $("#m-transfer", root); if (tr) tr.onclick = () => openTransfer();
+  $$("#m-filter button", root).forEach(b => b.onclick = () => {
+    moneyFilter = b.dataset.f;
+    $$("#m-filter button", root).forEach(x => x.classList.toggle("on", x === b));
+    renderMovList(root);
+  });
+  const s = $("#m-search", root);
+  s.value = moneySearch;
+  s.oninput = () => { moneySearch = s.value; renderMovList(root); };
+  renderMovList(root);
 };
 
 /* ---------------- REPORTES ---------------- */
@@ -624,6 +716,24 @@ SCREENS.settings = () => {
     </div>
 
     <div class="card">
+      <div class="row"><h2 style="margin:0">Cuentas</h2><button class="linkbtn" id="s-accounts">Gestionar</button></div>
+      <div class="hint">Efectivo, banco o tarjeta, con saldo por cuenta y transferencias entre ellas.</div>
+      ${accountsExist() ? `<div class="gap"></div>${DB.accounts.map(a => `<div class="list-item"><span class="mov-ic acc-ic">${ACCOUNT_ICON[a.kind] || "◆"}</span><div class="grow"><div class="t">${esc(a.name)}</div><div class="s">${esc(a.kind)}</div></div><div class="amt ${accountBalance(a.id) < 0 ? "out" : ""}">${fmt(accountBalance(a.id))}</div></div>`).join("")}` : ""}
+    </div>
+
+    <div class="card">
+      <div class="row"><h2 style="margin:0">Metas y deudas</h2><button class="linkbtn" id="s-goals">Gestionar</button></div>
+      <div class="hint">Objetivos de ahorro y seguimiento de deudas con progreso.</div>
+    </div>
+
+    <div class="card">
+      <div class="row"><h2 style="margin:0">Bloqueo con PIN</h2>
+        <label class="switch"><input type="checkbox" id="s-pin" ${DB.settings.pin ? "checked" : ""} /><span class="sl"></span></label>
+      </div>
+      <div class="hint">Pide un PIN de 4 dígitos al abrir la app para proteger tus datos.</div>
+    </div>
+
+    <div class="card">
       <h2>Tus datos</h2>
       <div class="hint">Todo se guarda solo en este dispositivo. Haz respaldos con frecuencia.</div>
       <div class="gap"></div>
@@ -658,6 +768,15 @@ WIRE.settings = (root) => {
   $("#s-cat-income", root).onclick = () => openCategories("income");
   $("#s-budgets", root).onclick = openBudgets;
   $("#s-recurring", root).onclick = openRecurring;
+  $("#s-accounts", root).onclick = openAccounts;
+  $("#s-goals", root).onclick = openGoals;
+  $("#s-pin", root).onchange = (e) => {
+    if (e.target.checked) { openPinSetup(); e.target.checked = !!DB.settings.pin; }
+    else {
+      if (confirm("¿Quitar el PIN? La app dejará de pedirlo al abrir.")) { DB.settings.pin = ""; save(); toast("PIN desactivado"); }
+      else { e.target.checked = true; }
+    }
+  };
   $$("[data-add-rec]", root).forEach(b => b.onclick = () => {
     const r = DB.recurring.find(x => x.id === b.dataset.addRec); if (!r) return;
     DB.transactions.push({ id: uid(), date: todayISO(), type: r.type, amount: r.amount, category: r.category, note: r.note });
@@ -706,7 +825,7 @@ function openTx(type, editId) {
   const editing = editId ? DB.transactions.find(t => t.id === editId) : null;
   const isIncome = editing ? editing.type === "income" : type === "income";
   const cats = DB.categories[isIncome ? "income" : "expense"];
-  const sel = { category: editing ? editing.category : cats[0] };
+  const sel = { category: editing ? editing.category : cats[0], account: editing ? editing.account : (DB.accounts[0] && DB.accounts[0].id) };
 
   openSheet(`
     <h2>${editing ? "Editar movimiento" : isIncome ? "Registrar ingreso" : "Registrar gasto"}</h2>
@@ -722,6 +841,8 @@ function openTx(type, editId) {
     <div class="chips" id="tx-cats">
       ${cats.map(c => `<button data-c="${esc(c)}" class="${c === sel.category ? "on" : ""}">${esc(c)}</button>`).join("")}
     </div>
+    ${accountsExist() ? `<div class="gap"></div><div class="label">Cuenta</div>
+    <div class="chips" id="tx-accs">${DB.accounts.map(a => `<button data-a="${a.id}" class="${a.id === sel.account ? "on" : ""}">${esc(a.name)}</button>`).join("")}</div>` : ""}
     <div class="gap"></div>
     <button class="btn" id="tx-save">${editing ? "Guardar cambios" : "Guardar"}</button>
     <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cancelar</button>
@@ -731,12 +852,16 @@ function openTx(type, editId) {
     sel.category = b.dataset.c;
     $$("#tx-cats button").forEach(x => x.classList.toggle("on", x === b));
   });
+  $$("#tx-accs button").forEach(b => b.onclick = () => {
+    sel.account = b.dataset.a;
+    $$("#tx-accs button").forEach(x => x.classList.toggle("on", x === b));
+  });
   $("#tx-save").onclick = () => {
     const amt = parseFloat(($("#tx-amt").value || "").replace(",", ".")) || 0;
     if (amt <= 0) return toast("Escribe un monto");
     const dv = $("#tx-date").value;
     const date = dv ? new Date(dv + "T12:00:00").toISOString() : todayISO();
-    const data = { type: isIncome ? "income" : "expense", amount: amt, category: sel.category, note: $("#tx-note").value.trim(), ref: $("#tx-ref").value.trim() };
+    const data = { type: isIncome ? "income" : "expense", amount: amt, category: sel.category, note: $("#tx-note").value.trim(), ref: $("#tx-ref").value.trim(), account: accountsExist() ? sel.account : undefined };
     if (editing) { Object.assign(editing, data, { date }); }
     else { DB.transactions.push({ id: uid(), date, ...data }); }
     save(); closeSheet(); render();
@@ -858,6 +983,193 @@ function openRecurring() {
   draw();
 }
 
+/* ---- Transferencia entre cuentas ---- */
+function openTransfer(editId) {
+  if (DB.accounts.length < 2) return toast("Necesitas al menos 2 cuentas");
+  const ed = editId ? DB.transactions.find(t => t.id === editId) : null;
+  const sel = { from: ed ? ed.from : DB.accounts[0].id, to: ed ? ed.to : DB.accounts[1].id };
+  openSheet(`
+    <h2>${ed ? "Editar transferencia" : "Transferencia"}</h2>
+    <label class="field"><span>Monto</span><input type="number" id="tr-amt" inputmode="decimal" placeholder="0" value="${ed ? ed.amount : ""}" /></label>
+    <label class="field"><span>Fecha</span><input type="date" id="tr-date" value="${dateInputValue(ed ? ed.date : todayISO())}" /></label>
+    <div class="label">Desde</div>
+    <div class="chips" id="tr-from">${DB.accounts.map(a => `<button data-a="${a.id}" class="${a.id === sel.from ? "on" : ""}">${esc(a.name)}</button>`).join("")}</div>
+    <div class="gap"></div><div class="label">Hacia</div>
+    <div class="chips" id="tr-to">${DB.accounts.map(a => `<button data-a="${a.id}" class="${a.id === sel.to ? "on" : ""}">${esc(a.name)}</button>`).join("")}</div>
+    <div class="gap"></div>
+    <label class="field"><span>Nota (opcional)</span><input type="text" id="tr-note" value="${ed ? esc(ed.note) : ""}" /></label>
+    <button class="btn" id="tr-save">${ed ? "Guardar cambios" : "Registrar transferencia"}</button>
+    <div class="gap"></div>
+    ${ed ? `<button class="btn soft-danger" id="tr-del">Eliminar</button><div class="gap"></div>` : ""}
+    <button class="btn line" onclick="closeSheet()">Cancelar</button>
+  `, { fullscreen: true });
+  $$("#tr-from button").forEach(b => b.onclick = () => { sel.from = b.dataset.a; $$("#tr-from button").forEach(x => x.classList.toggle("on", x === b)); });
+  $$("#tr-to button").forEach(b => b.onclick = () => { sel.to = b.dataset.a; $$("#tr-to button").forEach(x => x.classList.toggle("on", x === b)); });
+  $("#tr-save").onclick = () => {
+    const amt = parseFloat(($("#tr-amt").value || "").replace(",", ".")) || 0;
+    if (amt <= 0) return toast("Escribe un monto");
+    if (sel.from === sel.to) return toast("Elige cuentas distintas");
+    const dv = $("#tr-date").value;
+    const date = dv ? new Date(dv + "T12:00:00").toISOString() : todayISO();
+    const data = { type: "transfer", amount: amt, from: sel.from, to: sel.to, note: $("#tr-note").value.trim() };
+    if (ed) Object.assign(ed, data, { date }); else DB.transactions.push({ id: uid(), date, ...data });
+    save(); closeSheet(); render(); toast(ed ? "Transferencia actualizada" : "Transferencia registrada");
+  };
+  if (ed) $("#tr-del").onclick = () => { DB.transactions = DB.transactions.filter(t => t.id !== ed.id); save(); closeSheet(); render(); toast("Eliminada"); };
+}
+
+/* ---- Cuentas ---- */
+function accountsCardHTML() {
+  return `<div class="card">
+    <div class="row"><h2 style="margin:0">Cuentas</h2><strong>${fmt(netWorth())}</strong></div>
+    <div class="gap"></div>
+    ${DB.accounts.map(a => `<div class="list-item">
+      <span class="mov-ic acc-ic">${ACCOUNT_ICON[a.kind] || "◆"}</span>
+      <div class="grow"><div class="t">${esc(a.name)}</div><div class="s">${esc(a.kind)}</div></div>
+      <div class="amt ${accountBalance(a.id) < 0 ? "out" : ""}">${fmt(accountBalance(a.id))}</div>
+    </div>`).join("")}
+  </div>`;
+}
+function openAccounts() {
+  const draw = () => {
+    openSheet(`
+      <div class="toolbar"><h2 style="margin:0">Cuentas</h2><button class="x" onclick="closeSheet()">✕</button></div>
+      <p class="hint">Efectivo, banco o tarjeta. El saldo se calcula con tu saldo inicial más tus movimientos.</p>
+      ${DB.accounts.length ? `<div class="card">${DB.accounts.map(a => `
+        <div class="list-item">
+          <span class="mov-ic acc-ic">${ACCOUNT_ICON[a.kind] || "◆"}</span>
+          <div class="grow"><div class="t">${esc(a.name)}</div><div class="s">${esc(a.kind)} · saldo ${fmt(accountBalance(a.id))}</div></div>
+          <button class="btn small soft-danger" data-del-acc="${a.id}">×</button>
+        </div>`).join("")}</div>` : `<div class="card muted">Aún no tienes cuentas.</div>`}
+      <div class="card">
+        <h2>Nueva cuenta</h2>
+        <label class="field"><span>Nombre</span><input type="text" id="acc-name" placeholder="Ej. Banco, Efectivo" /></label>
+        <div class="label">Tipo</div>
+        <div class="seg" id="acc-kind">${ACCOUNT_KINDS.map((k, i) => `<button data-k="${k}" class="${i === 0 ? "on" : ""}">${k[0].toUpperCase() + k.slice(1)}</button>`).join("")}</div>
+        <div class="gap"></div>
+        <label class="field"><span>Saldo inicial</span><input type="number" id="acc-open" inputmode="numeric" placeholder="0" /></label>
+        <button class="btn" id="acc-add">Agregar cuenta</button>
+      </div>
+    `, { fullscreen: true });
+    let kind = ACCOUNT_KINDS[0];
+    $$("#acc-kind button").forEach(b => b.onclick = () => { kind = b.dataset.k; $$("#acc-kind button").forEach(x => x.classList.toggle("on", x === b)); });
+    $("#acc-add").onclick = () => {
+      const name = $("#acc-name").value.trim(); if (!name) return toast("Ponle un nombre");
+      DB.accounts.push({ id: uid(), name, kind, opening: +$("#acc-open").value || 0 }); save(); draw();
+    };
+    $$("[data-del-acc]").forEach(b => b.onclick = () => {
+      const id = b.dataset.delAcc;
+      const used = DB.transactions.some(t => t.account === id || t.from === id || t.to === id);
+      if (used && !confirm("Esta cuenta tiene movimientos. Si la borras, esos movimientos quedarán sin cuenta. ¿Continuar?")) return;
+      DB.accounts = DB.accounts.filter(a => a.id !== id); save(); draw();
+    });
+  };
+  draw();
+}
+
+/* ---- Metas y deudas ---- */
+function goalsCardHTML() {
+  return `<div class="card">
+    <div class="row"><h2 style="margin:0">Metas y deudas</h2><button class="linkbtn" id="h-goals">Gestionar</button></div>
+    <div class="gap"></div>
+    ${DB.goals.map(g => { const pct = goalPct(g), rem = Math.max(0, (g.target || 0) - (g.saved || 0));
+      return `<div class="bud">
+        <div class="bud-top"><span>${g.kind === "deuda" ? "🔻" : "🎯"} ${esc(g.name)}</span><span>${fmt(g.saved || 0)} / ${fmt(g.target || 0)}</span></div>
+        <div class="kpi-bar"><i style="width:${pct}%"></i></div>
+        <div class="hint" style="margin-top:6px">${g.kind === "deuda" ? `Falta pagar ${fmt(rem)}` : `Falta ${fmt(rem)} · ${Math.round(pct)}%`}</div>
+      </div>`; }).join("")}
+  </div>`;
+}
+function openGoals() {
+  const draw = () => {
+    openSheet(`
+      <div class="toolbar"><h2 style="margin:0">Metas y deudas</h2><button class="x" onclick="closeSheet()">✕</button></div>
+      <p class="hint">Fija un objetivo de ahorro o el total de una deuda, y registra tus aportes o pagos.</p>
+      ${DB.goals.length ? `<div class="card">${DB.goals.map(g => { const pct = goalPct(g);
+        return `<div class="goal">
+          <div class="bud-top"><span>${g.kind === "deuda" ? "🔻" : "🎯"} ${esc(g.name)}</span><span>${fmt(g.saved || 0)} / ${fmt(g.target || 0)}</span></div>
+          <div class="kpi-bar"><i style="width:${pct}%"></i></div>
+          <div class="btn-row" style="margin:10px 0 0">
+            <button class="btn small line" data-add-goal="${g.id}">${g.kind === "deuda" ? "+ Pago" : "+ Aporte"}</button>
+            <button class="btn small soft-danger" data-del-goal="${g.id}">Eliminar</button>
+          </div>
+        </div>`; }).join("")}</div>` : `<div class="card muted">Aún no tienes metas.</div>`}
+      <div class="card">
+        <h2>Nueva meta</h2>
+        <div class="seg" id="goal-kind"><button data-k="ahorro" class="on">Ahorro</button><button data-k="deuda">Deuda</button></div>
+        <div class="gap"></div>
+        <label class="field"><span>Nombre</span><input type="text" id="goal-name" placeholder="Ej. Fondo de emergencia" /></label>
+        <label class="field"><span>Monto objetivo</span><input type="number" id="goal-target" inputmode="numeric" placeholder="0" /></label>
+        <label class="field"><span>Ya llevas (opcional)</span><input type="number" id="goal-saved" inputmode="numeric" placeholder="0" /></label>
+        <button class="btn" id="goal-add">Crear meta</button>
+      </div>
+    `, { fullscreen: true });
+    let kind = "ahorro";
+    $$("#goal-kind button").forEach(b => b.onclick = () => { kind = b.dataset.k; $$("#goal-kind button").forEach(x => x.classList.toggle("on", x === b)); });
+    $("#goal-add").onclick = () => {
+      const name = $("#goal-name").value.trim(); if (!name) return toast("Ponle un nombre");
+      const target = +$("#goal-target").value || 0; if (target <= 0) return toast("Escribe el objetivo");
+      DB.goals.push({ id: uid(), name, kind, target, saved: +$("#goal-saved").value || 0 }); save(); draw();
+    };
+    $$("[data-add-goal]").forEach(b => b.onclick = () => {
+      const g = DB.goals.find(x => x.id === b.dataset.addGoal); if (!g) return;
+      const v = prompt(g.kind === "deuda" ? "¿Cuánto pagaste?" : "¿Cuánto aportaste?");
+      const amt = parseFloat((v || "").replace(",", ".")) || 0; if (amt <= 0) return;
+      g.saved = (g.saved || 0) + amt; save(); draw();
+    });
+    $$("[data-del-goal]").forEach(b => b.onclick = () => { DB.goals = DB.goals.filter(g => g.id !== b.dataset.delGoal); save(); draw(); });
+  };
+  draw();
+}
+
+/* ---- Bloqueo con PIN ---- */
+function openPinSetup() {
+  openSheet(`
+    <h2>Crear PIN</h2>
+    <p class="hint">Elige un PIN de 4 dígitos; se pedirá al abrir la app. Si lo olvidas, la única forma de recuperar el acceso es borrar los datos, así que anótalo.</p>
+    <label class="field"><span>Nuevo PIN</span><input type="password" id="pin-a" inputmode="numeric" maxlength="4" placeholder="••••" /></label>
+    <label class="field"><span>Repite el PIN</span><input type="password" id="pin-b" inputmode="numeric" maxlength="4" placeholder="••••" /></label>
+    <button class="btn" id="pin-save">Guardar PIN</button>
+    <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cancelar</button>
+  `);
+  $("#pin-save").onclick = async () => {
+    const a = $("#pin-a").value.trim(), b = $("#pin-b").value.trim();
+    if (!/^\d{4}$/.test(a)) return toast("Deben ser 4 dígitos");
+    if (a !== b) return toast("Los PIN no coinciden");
+    DB.settings.pin = await sha256(a); save(); closeSheet(); render(); toast("PIN activado");
+  };
+}
+let pinBuffer = "";
+function showLock() {
+  if (!DB.settings.pin) return;
+  if (document.getElementById("lock")) return;
+  pinBuffer = "";
+  const el = document.createElement("div"); el.className = "lock"; el.id = "lock";
+  const dots = () => Array.from({ length: 4 }, (_, i) => `<span class="pd ${i < pinBuffer.length ? "on" : ""}"></span>`).join("");
+  const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"];
+  el.innerHTML = `
+    <div class="lock-inner">
+      <div class="lock-title">MI NORTE</div>
+      <div class="lock-sub">Ingresa tu PIN</div>
+      <div class="pin-dots" id="pin-dots">${dots()}</div>
+      <div class="keypad">${keys.map(k => k === "" ? `<span></span>` : `<button class="key" data-k="${k}">${k}</button>`).join("")}</div>
+    </div>`;
+  document.body.appendChild(el);
+  const refresh = () => { $("#pin-dots", el).innerHTML = dots(); };
+  const check = async () => {
+    const h = await sha256(pinBuffer);
+    if (h === DB.settings.pin) { el.remove(); }
+    else { const inner = $(".lock-inner", el); inner.classList.add("shake"); setTimeout(() => inner.classList.remove("shake"), 420); pinBuffer = ""; refresh(); }
+  };
+  $$(".key", el).forEach(b => b.onclick = () => {
+    const k = b.dataset.k;
+    if (k === "⌫") { pinBuffer = pinBuffer.slice(0, -1); refresh(); return; }
+    if (pinBuffer.length >= 4) return;
+    pinBuffer += k; refresh();
+    if (pinBuffer.length === 4) setTimeout(check, 120);
+  });
+}
+
 /* ===========================================================
    EXPORTACIÓN
    =========================================================== */
@@ -972,11 +1284,12 @@ document.body.insertAdjacentHTML("beforeend", `
 $$(".tab").forEach(b => b.onclick = () => { currentTab = b.dataset.tab; render(); });
 window.closeSheet = closeSheet; // usado por onclick inline
 render();
+showLock();
 maybeShowGate();
 
-/* Volver a la app (PWA reanudada) puede abrir la pantalla de inicio si toca otra franja */
+/* Al volver a la app (PWA reanudada): pedir PIN y, si toca, mostrar la pantalla de inicio */
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") maybeShowGate();
+  if (document.visibilityState === "visible") { showLock(); maybeShowGate(); }
 });
 
 /* Service worker (offline) */
