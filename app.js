@@ -12,8 +12,8 @@ const DEFAULT_CATEGORIES = {
   income:  ["Salario", "Negocio", "Venta", "Inversión", "Regalo", "Otro"],
 };
 
-/* Paleta de categorías (misma en claro/oscuro, buen contraste) */
-const CAT_COLORS = ["#0f766e", "#2563eb", "#7c3aed", "#db2777", "#ea580c", "#0891b2", "#16a34a", "#ca8a04", "#e11d48", "#475569"];
+/* Paleta de categorías (dirección Aurora) */
+const CAT_COLORS = ["#2dd4bf", "#6366f1", "#4ade9e", "#ff8a73", "#38bdf8", "#a78bfa", "#fbbf24", "#f472b6", "#22d3ee", "#94a3b8"];
 
 const CURRENCIES = [
   { code: "CRC", locale: "es-CR", label: "Colón (₡)" },
@@ -232,6 +232,38 @@ function wireMonthNav(root) {
   });
 }
 
+/* Anillo de progreso con degradado (SVG) */
+function ring(pct) {
+  const p = Math.max(0, Math.min(100, pct || 0));
+  const r = 26, c = 2 * Math.PI * r, dash = p / 100 * c;
+  return `<svg class="ring" viewBox="0 0 60 60" aria-hidden="true">
+    <circle cx="30" cy="30" r="${r}" fill="none" stroke="var(--fill)" stroke-width="7"/>
+    <circle cx="30" cy="30" r="${r}" fill="none" stroke="url(#grad-ring)" stroke-width="7" stroke-linecap="round"
+      stroke-dasharray="${dash} ${c - dash}" transform="rotate(-90 30 30)"/>
+  </svg>`;
+}
+
+/* Sparkline con degradado (SVG) */
+function sparkline(values) {
+  const n = values.length;
+  if (n < 2) return `<div class="muted">Aún no hay suficiente historial.</div>`;
+  const min = Math.min(...values), max = Math.max(...values), span = (max - min) || 1;
+  const W = 300, H = 60, pad = 8;
+  const pts = values.map((v, i) => {
+    const x = i * (W / (n - 1));
+    const y = H - pad - ((v - min) / span) * (H - 2 * pad);
+    return [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
+  });
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0]},${p[1]}`).join(" ");
+  const area = `${line} L${W},${H} L0,${H} Z`;
+  const last = pts[n - 1];
+  return `<svg class="spark-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+    <path d="${area}" fill="url(#grad-fill)"/>
+    <path d="${line}" fill="none" stroke="url(#grad-data)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="${last[0]}" cy="${last[1]}" r="3.4" fill="var(--grad-b)"/>
+  </svg>`;
+}
+
 /* Anillo de dona (SVG) */
 function donut(segments, centerTop, centerBottom) {
   const size = 168, stroke = 20, r = (size - stroke) / 2, c = 2 * Math.PI * r;
@@ -257,8 +289,12 @@ function donut(segments, centerTop, centerBottom) {
 /* ---------------- RESUMEN (Inicio) ---------------- */
 SCREENS.home = () => {
   const t = monthTotals(viewMonth);
-  const prev = monthTotals(shiftMonth(viewMonth, -1));
+  const prevMk = shiftMonth(viewMonth, -1);
+  const prev = monthTotals(prevMk);
   const proj = projectionForMonth(viewMonth);
+  const sparkVals = lastMonths(6).map(mk => monthTotals(mk).balance);
+  const balDelta = t.balance - prev.balance;
+  const hasHistory = DB.transactions.length > 0;
   const budgets = budgetStatus(viewMonth).filter(b => b.over || b.pct >= 80).slice(0, 3);
   const recent = [...DB.transactions].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 4);
   const goal = DB.settings.savingsGoal || 0;
@@ -283,21 +319,21 @@ SCREENS.home = () => {
       <button class="rem-x" id="rem-dismiss" aria-label="Descartar">✕</button>
     </div>` : ""}
 
-    <div class="hero ${balancePos ? "pos" : "neg"}">
+    <div class="hero">
       <div class="hero-label">Balance del mes</div>
       <div class="hero-value">${balancePos ? "" : "−"}${fmt(Math.abs(t.balance))}</div>
+      ${(prev.count || hasHistory) ? `<div class="hero-delta ${balDelta > 0 ? "up" : balDelta < 0 ? "down" : "flat"}">${balDelta > 0 ? "▲" : balDelta < 0 ? "▼" : "•"} ${fmt(Math.abs(balDelta))} <span class="muted">vs. ${esc(shortMonthLabel(prevMk))}</span></div>` : ""}
       <div class="hero-sub">
-        <span><i class="dot in"></i>Ingresos ${fmt(t.income)}</span>
-        <span><i class="dot out"></i>Gastos ${fmt(t.expense)}</span>
+        <span><i class="dot in"></i>Ingresos <span class="v">${fmt(t.income)}</span></span>
+        <span><i class="dot out"></i>Gastos <span class="v">${fmt(t.expense)}</span></span>
       </div>
     </div>
 
     <div class="kpis">
       <div class="kpi">
         <div class="kpi-k">Tasa de ahorro</div>
-        <div class="kpi-v">${Math.round(t.savingsRate)}%</div>
-        <div class="kpi-bar"><i style="width:${Math.max(0, Math.min(100, t.savingsRate))}%;background:${t.savingsRate >= goal ? "var(--green)" : "var(--amber)"}"></i></div>
-        <div class="kpi-foot">${goal ? `Meta ${goal}%` : "Sin meta"}</div>
+        <div class="kpi-ring">${ring(t.savingsRate)}<div class="kpi-ringv">${Math.round(t.savingsRate)}%</div></div>
+        <div class="kpi-foot">${goal ? (t.savingsRate >= goal ? `Meta ${goal}% · superada` : `Meta ${goal}%`) : "Sin meta"}</div>
       </div>
       <div class="kpi">
         <div class="kpi-k">${isCurrentMonth(viewMonth) ? "Proyección de gasto" : "Movimientos"}</div>
@@ -305,6 +341,13 @@ SCREENS.home = () => {
         <div class="kpi-foot">${proj != null ? "estimado a fin de mes" : "registrados este mes"}</div>
       </div>
     </div>
+
+    ${hasHistory ? `
+    <div class="card spark-card">
+      <div class="spark-cap"><span class="lbl">Balance · 6 meses</span><span class="v">${fmt(sparkVals[sparkVals.length - 1])}</span></div>
+      <div class="gap"></div>
+      ${sparkline(sparkVals)}
+    </div>` : ""}
 
     <div class="btn-row">
       <button class="btn" id="h-expense">− Registrar gasto</button>
@@ -901,6 +944,14 @@ function closeGate() { const g = document.querySelector(".gate"); if (g) g.remov
 /* ===========================================================
    ARRANQUE
    =========================================================== */
+/* Degradados de datos (duotono Aurora), disponibles para todos los SVG */
+document.body.insertAdjacentHTML("beforeend", `
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+    <linearGradient id="grad-data" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#6366f1"/></linearGradient>
+    <linearGradient id="grad-ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#6366f1"/></linearGradient>
+    <linearGradient id="grad-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6366f1" stop-opacity=".26"/><stop offset="1" stop-color="#6366f1" stop-opacity="0"/></linearGradient>
+  </defs></svg>`);
+
 $$(".tab").forEach(b => b.onclick = () => { currentTab = b.dataset.tab; render(); });
 window.closeSheet = closeSheet; // usado por onclick inline
 render();
