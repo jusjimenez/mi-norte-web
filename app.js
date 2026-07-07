@@ -12,8 +12,9 @@ const DEFAULT_CATEGORIES = {
   income:  ["Salario", "Negocio", "Venta", "Inversión", "Regalo", "Otro"],
 };
 
-/* Paleta de categorías (dirección Aurora) */
-const CAT_COLORS = ["#2dd4bf", "#6366f1", "#4ade9e", "#ff8a73", "#38bdf8", "#a78bfa", "#fbbf24", "#f472b6", "#22d3ee", "#94a3b8"];
+/* Paleta de categorías (dirección Aurora — teal se reserva para el degradado de datos) */
+const CAT_COLORS = ["#4ade9e", "#6366f1", "#38bdf8", "#ff8a73", "#a78bfa", "#22d3ee", "#fbbf24", "#f472b6", "#2dd4bf", "#94a3b8"];
+const GRAD_CSS = "linear-gradient(90deg, var(--grad-a), var(--grad-b))";
 
 const CURRENCIES = [
   { code: "CRC", locale: "es-CR", label: "Colón (₡)" },
@@ -103,6 +104,13 @@ function money(n) {
   }
 }
 const fmt = (n) => money(n);
+function fmtHero(n) {
+  const s = DB.settings;
+  try {
+    const parts = new Intl.NumberFormat(s.locale || "es-CR", { style: "currency", currency: s.currency || "CRC", maximumFractionDigits: 0 }).formatToParts(Math.round(n || 0));
+    return parts.map(p => p.type === "currency" ? `<span class="cur">${esc(p.value)}</span>` : esc(p.value)).join("");
+  } catch (e) { return esc(fmt(n)); }
+}
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -269,10 +277,12 @@ function donut(segments, centerTop, centerBottom) {
   const size = 168, stroke = 20, r = (size - stroke) / 2, c = 2 * Math.PI * r;
   let offset = 0;
   const total = segments.reduce((s, x) => s + x.value, 0);
+  const top = segments.reduce((m, s) => s.value > m ? s.value : m, 0);
   const arcs = total > 0 ? segments.map(s => {
     const len = s.value / total * c;
     const dash = `${len} ${c - len}`;
-    const el = `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${stroke}" stroke-dasharray="${dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${size / 2} ${size / 2})" stroke-linecap="butt"/>`;
+    const stroke2 = (s.value === top) ? "url(#grad-data)" : s.color;
+    const el = `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${stroke2}" stroke-width="${stroke}" stroke-dasharray="${dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${size / 2} ${size / 2})" stroke-linecap="butt"/>`;
     offset += len;
     return el;
   }).join("") : `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="var(--fill)" stroke-width="${stroke}"/>`;
@@ -321,7 +331,7 @@ SCREENS.home = () => {
 
     <div class="hero">
       <div class="hero-label">Balance del mes</div>
-      <div class="hero-value">${balancePos ? "" : "−"}${fmt(Math.abs(t.balance))}</div>
+      <div class="hero-value">${balancePos ? "" : "−"}${fmtHero(Math.abs(t.balance))}</div>
       ${(prev.count || hasHistory) ? `<div class="hero-delta ${balDelta > 0 ? "up" : balDelta < 0 ? "down" : "flat"}">${balDelta > 0 ? "▲" : balDelta < 0 ? "▼" : "•"} ${fmt(Math.abs(balDelta))} <span class="muted">vs. ${esc(shortMonthLabel(prevMk))}</span></div>` : ""}
       <div class="hero-sub">
         <span><i class="dot in"></i>Ingresos <span class="v">${fmt(t.income)}</span></span>
@@ -397,17 +407,18 @@ WIRE.home = (root) => {
 };
 
 /* Fila de movimiento */
-function txRow(t) {
+function txRow(t, opts = {}) {
   const inc = t.type === "income";
+  const col = catColor(t.category, t.type);
   return `
     <div class="list-item">
-      <span class="cdot" style="background:${catColor(t.category, t.type)}"></span>
+      <span class="mov-ic" style="color:${col}">${inc ? "↑" : "↓"}</span>
       <div class="grow">
         <div class="t">${esc(t.note || t.category || (inc ? "Ingreso" : "Gasto"))}</div>
         <div class="s">${new Date(t.date).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short" })} · ${esc(t.category || "Otro")}</div>
       </div>
       <div class="amt ${inc ? "in" : "out"}">${inc ? "+" : "−"}${fmt(t.amount)}</div>
-      <button class="btn small soft-danger" data-del-tx="${t.id}" aria-label="Eliminar">×</button>
+      ${opts.deletable ? `<button class="btn small soft-danger" data-del-tx="${t.id}" aria-label="Eliminar">×</button>` : ""}
     </div>`;
 }
 function wireTxRows(root) {
@@ -447,7 +458,7 @@ SCREENS.money = () => {
     <div class="gap"></div>
 
     <div class="card">
-      ${list.length ? list.map(txRow).join("") : `<div class="muted">No hay movimientos en este mes con este filtro.</div>`}
+      ${list.length ? list.map(t => txRow(t, { deletable: true })).join("") : `<div class="muted">No hay movimientos en este mes con este filtro.</div>`}
     </div>
   `;
 };
@@ -479,11 +490,14 @@ SCREENS.reports = () => {
       <div class="trend-x ${s.mk === viewMonth ? "on" : ""}">${esc(shortMonthLabel(s.mk))}</div>
     </div>`).join("");
 
-  const catRows = (rows) => rows.length ? rows.map(r => `
+  const catRows = (rows, gradTop = false) => rows.length ? rows.map((r, i) => {
+    const paint = (gradTop && i === 0) ? GRAD_CSS : r.color;
+    return `
     <div class="catrow">
-      <div class="catrow-top"><span><i class="cdot" style="background:${r.color}"></i>${esc(r.name)}</span><span>${fmt(r.value)} · ${Math.round(r.pct)}%</span></div>
-      <div class="kpi-bar"><i style="width:${r.pct}%;background:${r.color}"></i></div>
-    </div>`).join("") : `<div class="muted">Sin datos este mes.</div>`;
+      <div class="catrow-top"><span><i class="cdot" style="background:${paint}"></i>${esc(r.name)}</span><span>${fmt(r.value)} · ${Math.round(r.pct)}%</span></div>
+      <div class="kpi-bar"><i style="width:${r.pct}%;background:${paint}"></i></div>
+    </div>`;
+  }).join("") : `<div class="muted">Sin datos este mes.</div>`;
 
   return `
     <div class="head"><h1>Reportes</h1><p>Entiende a dónde va tu dinero.</p></div>
@@ -502,7 +516,7 @@ SCREENS.reports = () => {
         <div class="donut-row">
           ${donut(bd, `<div class="dc-amt">${fmt(t.expense)}</div>`, `<div class="dc-cap">gastado</div>`)}
           <div class="legend">
-            ${bd.slice(0, 6).map(s => `<div class="lg"><i class="cdot" style="background:${s.color}"></i><span>${esc(s.name)}</span><b>${Math.round(s.pct)}%</b></div>`).join("")}
+            ${bd.slice(0, 6).map((s, i) => `<div class="lg"><i class="cdot" style="background:${i === 0 ? GRAD_CSS : s.color}"></i><span>${esc(s.name)}</span><b>${Math.round(s.pct)}%</b></div>`).join("")}
           </div>
         </div>` : `<div class="muted">Aún no registras gastos este mes.</div>`}
     </div>
@@ -515,7 +529,7 @@ SCREENS.reports = () => {
 
     <div class="card">
       <h2>Detalle de gastos</h2>
-      ${catRows(bd)}
+      ${catRows(bd, true)}
     </div>
 
     <div class="card">
