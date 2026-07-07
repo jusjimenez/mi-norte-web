@@ -166,9 +166,16 @@ function monthTotals(mk) {
   const savingsRate = income > 0 ? (balance / income) * 100 : 0;
   return { income, expense, balance, savingsRate, count: tx.length };
 }
-function categoryBreakdown(mk, type = "expense") {
+function totalsOf(list) {
+  const income = list.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0);
+  const expense = list.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+  const balance = income - expense;
+  const savingsRate = income > 0 ? (balance / income) * 100 : 0;
+  return { income, expense, balance, savingsRate, count: list.length };
+}
+function breakdownOf(list, type = "expense") {
   const map = {};
-  txOfMonth(mk).filter(t => t.type === type).forEach(t => {
+  list.filter(t => t.type === type).forEach(t => {
     const c = t.category || "Otro";
     map[c] = (map[c] || 0) + t.amount;
   });
@@ -177,6 +184,12 @@ function categoryBreakdown(mk, type = "expense") {
     .map(([name, value]) => ({ name, value, pct: value / total * 100, color: catColor(name, type) }))
     .sort((a, b) => b.value - a.value);
 }
+function categoryBreakdown(mk, type = "expense") { return breakdownOf(txOfMonth(mk), type); }
+function txInRange(fromKey, toKey) {
+  return DB.transactions.filter(t => { const d = dateInputValue(t.date); return d >= fromKey && d <= toKey; });
+}
+function txOfYear(y) { return DB.transactions.filter(t => new Date(t.date).getFullYear() === y); }
+function allCategories() { return [...new Set([...DB.categories.expense, ...DB.categories.income])]; }
 function catColor(name, type = "expense") {
   const list = DB.categories[type] || [];
   const i = list.indexOf(name);
@@ -498,18 +511,26 @@ function wireTxRows(root) {
 /* ---------------- MOVIMIENTOS ---------------- */
 let moneyFilter = "all"; // all | income | expense
 let moneySearch = "";
+let moneyAccount = "";
+let moneyCat = "";
+function moneyIsGlobal() { return !!(moneySearch.trim() || moneyAccount || moneyCat); }
 function movListHTML() {
-  let list = txOfMonth(viewMonth).sort((a, b) => new Date(b.date) - new Date(a.date));
+  const global = moneyIsGlobal();
+  let list = (global ? [...DB.transactions] : txOfMonth(viewMonth)).sort((a, b) => new Date(b.date) - new Date(a.date));
   if (moneyFilter !== "all") list = list.filter(x => x.type === moneyFilter);
+  if (moneyAccount) list = list.filter(x => x.type === "transfer" ? (x.from === moneyAccount || x.to === moneyAccount) : x.account === moneyAccount);
+  if (moneyCat) list = list.filter(x => x.category === moneyCat);
   if (moneySearch.trim()) list = list.filter(x => txMatches(x, moneySearch.trim()));
   if (!list.length) return `<div class="muted">No hay movimientos con estos filtros.</div>`;
+  const note = global ? `<div class="listnote">${list.length} resultado${list.length !== 1 ? "s" : ""} en todo el historial</div>` : "";
   const groups = [];
   list.forEach(t => { const k = dateInputValue(t.date); let g = groups.find(x => x.k === k); if (!g) { g = { k, items: [] }; groups.push(g); } g.items.push(t); });
-  return groups.map(g => {
+  const body = groups.map(g => {
     const net = g.items.reduce((s, t) => s + (t.type === "income" ? t.amount : t.type === "expense" ? -t.amount : 0), 0);
-    const dlabel = new Date(g.items[0].date).toLocaleDateString(DB.settings.locale || "es-CR", { weekday: "short", day: "numeric", month: "short" });
+    const dlabel = new Date(g.items[0].date).toLocaleDateString(DB.settings.locale || "es-CR", global ? { day: "numeric", month: "short", year: "numeric" } : { weekday: "short", day: "numeric", month: "short" });
     return `<div class="day-h"><span>${esc(dlabel)}</span><span class="${net >= 0 ? "in" : "out"}">${net >= 0 ? "+" : "−"}${fmt(Math.abs(net))}</span></div>${g.items.map(t => txRow(t, { deletable: true })).join("")}`;
   }).join("");
+  return note + body;
 }
 function renderMovList(root) {
   const c = $("#mov-list", root || document); if (!c) return;
@@ -534,7 +555,12 @@ SCREENS.money = () => {
     </div>
     ${canTransfer ? `<button class="btn line" id="m-transfer" style="margin-bottom:16px">⇄ Transferencia entre cuentas</button>` : ""}
 
-    <input type="text" id="m-search" placeholder="Buscar por descripción, categoría o comprobante" />
+    <input type="text" id="m-search" placeholder="Buscar en todo el historial…" />
+    <div class="gap"></div>
+    <div class="filters">
+      ${accountsExist() ? `<select id="m-acc"><option value="">Todas las cuentas</option>${DB.accounts.map(a => `<option value="${a.id}" ${moneyAccount === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select>` : ""}
+      <select id="m-cat"><option value="">Todas las categorías</option>${allCategories().map(c => `<option value="${esc(c)}" ${moneyCat === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
+    </div>
     <div class="gap"></div>
     <div class="seg" id="m-filter">
       <button data-f="all" class="${moneyFilter === "all" ? "on" : ""}">Todos</button>
@@ -543,6 +569,7 @@ SCREENS.money = () => {
     </div>
     <div class="gap"></div>
 
+    ${moneyIsGlobal() ? `<button class="btn line small" id="m-clear" style="margin-bottom:12px">Limpiar filtros</button>` : ""}
     <div class="card"><div id="mov-list"></div></div>
   `;
 };
@@ -556,6 +583,9 @@ WIRE.money = (root) => {
     $$("#m-filter button", root).forEach(x => x.classList.toggle("on", x === b));
     renderMovList(root);
   });
+  const acc = $("#m-acc", root); if (acc) acc.onchange = () => { moneyAccount = acc.value; render(); };
+  const cat = $("#m-cat", root); cat.onchange = () => { moneyCat = cat.value; render(); };
+  const clr = $("#m-clear", root); if (clr) clr.onclick = () => { moneySearch = ""; moneyAccount = ""; moneyCat = ""; moneyFilter = "all"; render(); };
   const s = $("#m-search", root);
   s.value = moneySearch;
   s.oninput = () => { moneySearch = s.value; renderMovList(root); };
@@ -563,24 +593,52 @@ WIRE.money = (root) => {
 };
 
 /* ---------------- REPORTES ---------------- */
+let reportMode = "month"; // month | year | range
+let reportYear = new Date().getFullYear();
+let reportFrom = `${monthKeyOf(new Date())}-01`;
+let reportTo = todayKeyStr();
 SCREENS.reports = () => {
-  const t = monthTotals(viewMonth);
-  const bd = categoryBreakdown(viewMonth, "expense");
-  const incomeBd = categoryBreakdown(viewMonth, "income");
-  const months = lastMonths(6);
-  const series = months.map(mk => ({ mk, ...monthTotals(mk) }));
-  const maxBar = Math.max(1, ...series.map(s => Math.max(s.income, s.expense)));
-  const budgets = budgetStatus(viewMonth);
-  const proj = projectionForMonth(viewMonth);
+  const loc = DB.settings.locale || "es-CR";
+  const mode = reportMode;
+  const curYear = new Date().getFullYear();
+  let list, periodLabel, trendSeries = null, proj = null, showBudgets = false;
 
-  const trendBars = series.map(s => `
-    <div class="trend-col">
-      <div class="trend-bars">
-        <div class="tb in" style="height:${Math.round(s.income / maxBar * 100)}%" title="Ingresos ${fmt(s.income)}"></div>
-        <div class="tb out" style="height:${Math.round(s.expense / maxBar * 100)}%" title="Gastos ${fmt(s.expense)}"></div>
-      </div>
-      <div class="trend-x ${s.mk === viewMonth ? "on" : ""}">${esc(shortMonthLabel(s.mk))}</div>
-    </div>`).join("");
+  if (mode === "month") {
+    list = txOfMonth(viewMonth);
+    periodLabel = monthLabel(viewMonth);
+    proj = projectionForMonth(viewMonth);
+    trendSeries = lastMonths(6).map(mk => ({ label: shortMonthLabel(mk), ...monthTotals(mk), cur: mk === viewMonth }));
+    showBudgets = true;
+  } else if (mode === "year") {
+    list = txOfYear(reportYear);
+    periodLabel = String(reportYear);
+    trendSeries = Array.from({ length: 12 }, (_, m) => {
+      const mk = `${reportYear}-${String(m + 1).padStart(2, "0")}`;
+      return { label: new Date(reportYear, m, 1).toLocaleDateString(loc, { month: "short" }), ...monthTotals(mk), cur: false };
+    });
+  } else {
+    list = txInRange(reportFrom, reportTo);
+    const f = new Date(reportFrom + "T12:00:00").toLocaleDateString(loc, { day: "numeric", month: "short", year: "numeric" });
+    const tt = new Date(reportTo + "T12:00:00").toLocaleDateString(loc, { day: "numeric", month: "short", year: "numeric" });
+    periodLabel = `${f} – ${tt}`;
+  }
+
+  const t = totalsOf(list);
+  const bd = breakdownOf(list, "expense");
+  const incomeBd = breakdownOf(list, "income");
+  const budgets = budgetStatus(viewMonth);
+
+  const trendBars = trendSeries ? (() => {
+    const maxBar = Math.max(1, ...trendSeries.map(s => Math.max(s.income, s.expense)));
+    return trendSeries.map(s => `
+      <div class="trend-col">
+        <div class="trend-bars">
+          <div class="tb in" style="height:${Math.round(s.income / maxBar * 100)}%" title="Ingresos ${fmt(s.income)}"></div>
+          <div class="tb out" style="height:${Math.round(s.expense / maxBar * 100)}%" title="Gastos ${fmt(s.expense)}"></div>
+        </div>
+        <div class="trend-x ${s.cur ? "on" : ""}">${esc(s.label)}</div>
+      </div>`).join("");
+  })() : "";
 
   const catRows = (rows, gradTop = false) => rows.length ? rows.map((r, i) => {
     const paint = (gradTop && i === 0) ? GRAD_CSS : r.color;
@@ -589,17 +647,37 @@ SCREENS.reports = () => {
       <div class="catrow-top"><span><i class="cdot" style="background:${paint}"></i>${esc(r.name)}</span><span>${fmt(r.value)} · ${Math.round(r.pct)}%</span></div>
       <div class="kpi-bar"><i style="width:${r.pct}%;background:${paint}"></i></div>
     </div>`;
-  }).join("") : `<div class="muted">Sin datos este mes.</div>`;
+  }).join("") : `<div class="muted">Sin datos en este periodo.</div>`;
+
+  let periodNav;
+  if (mode === "month") periodNav = monthNav();
+  else if (mode === "year") periodNav = `
+    <div class="monthnav">
+      <button class="mn-btn" data-yr="-1" aria-label="Año anterior">‹</button>
+      <div class="mn-label">${reportYear}</div>
+      <button class="mn-btn" data-yr="1" aria-label="Año siguiente" ${reportYear >= curYear ? "disabled" : ""}>›</button>
+    </div>`;
+  else periodNav = `
+    <div class="rangebar">
+      <label class="field"><span>Desde</span><input type="date" id="rp-from" value="${reportFrom}" /></label>
+      <label class="field"><span>Hasta</span><input type="date" id="rp-to" value="${reportTo}" /></label>
+    </div>`;
 
   return `
     <div class="head"><h1>Reportes</h1><p>Entiende a dónde va tu dinero.</p></div>
-    ${monthNav()}
+    <div class="seg" id="rp-mode">
+      <button data-m="month" class="${mode === "month" ? "on" : ""}">Mes</button>
+      <button data-m="year" class="${mode === "year" ? "on" : ""}">Año</button>
+      <button data-m="range" class="${mode === "range" ? "on" : ""}">Rango</button>
+    </div>
+    <div class="gap"></div>
+    ${periodNav}
 
     <div class="metrics">
       <div class="metric"><div class="v">${Math.round(t.savingsRate)}%</div><div class="k">Tasa de ahorro</div></div>
-      <div class="metric"><div class="v">${fmt(t.balance)}</div><div class="k">Balance del mes</div></div>
+      <div class="metric"><div class="v">${fmt(t.balance)}</div><div class="k">Balance</div></div>
       <div class="metric"><div class="v">${fmt(t.expense)}</div><div class="k">Gasto total</div></div>
-      <div class="metric"><div class="v">${proj != null ? fmt(proj) : "—"}</div><div class="k">Proyección fin de mes</div></div>
+      <div class="metric"><div class="v">${proj != null ? fmt(proj) : t.count}</div><div class="k">${proj != null ? "Proyección fin de mes" : "Movimientos"}</div></div>
     </div>
 
     <div class="card">
@@ -610,14 +688,15 @@ SCREENS.reports = () => {
           <div class="legend">
             ${bd.slice(0, 6).map((s, i) => `<div class="lg"><i class="cdot" style="background:${i === 0 ? GRAD_CSS : s.color}"></i><span>${esc(s.name)}</span><b>${Math.round(s.pct)}%</b></div>`).join("")}
           </div>
-        </div>` : `<div class="muted">Aún no registras gastos este mes.</div>`}
+        </div>` : `<div class="muted">Aún no registras gastos en este periodo.</div>`}
     </div>
 
+    ${trendSeries ? `
     <div class="card">
-      <h2>Tendencia (6 meses)</h2>
+      <h2>Tendencia (${mode === "year" ? "12 meses" : "6 meses"})</h2>
       <div class="trend">${trendBars}</div>
       <div class="trend-legend"><span><i class="dot in"></i>Ingresos</span><span><i class="dot out"></i>Gastos</span></div>
-    </div>
+    </div>` : ""}
 
     <div class="card">
       <h2>Detalle de gastos</h2>
@@ -629,6 +708,7 @@ SCREENS.reports = () => {
       ${catRows(incomeBd)}
     </div>
 
+    ${showBudgets ? `
     <div class="card">
       <div class="row"><h2 style="margin:0">Presupuestos</h2><button class="linkbtn" id="r-budgets">Editar</button></div>
       <div class="gap"></div>
@@ -638,20 +718,38 @@ SCREENS.reports = () => {
             <span class="${b.over ? "over" : ""}">${fmt(b.spent)} / ${fmt(b.limit)}</span></div>
           <div class="kpi-bar"><i style="width:${b.pct}%;background:${b.over ? "var(--red)" : b.pct >= 80 ? "var(--amber)" : "var(--green)"}"></i></div>
         </div>`).join("") : `<div class="muted">Sin presupuestos. Defínelos para recibir alertas.</div>`}
-    </div>
+    </div>` : ""}
 
     <div class="card">
       <h2>Exportar reporte</h2>
-      <div class="hint">Descarga los movimientos de ${esc(monthLabel(viewMonth))} como CSV para abrir en Excel/Sheets.</div>
+      <div class="hint">Descarga los movimientos de ${esc(periodLabel)} como CSV para abrir en Excel/Sheets.</div>
       <div class="gap"></div>
-      <button class="btn ghost" id="r-csv-month">Exportar este mes (CSV)</button>
+      <button class="btn ghost" id="r-csv">Exportar (CSV)</button>
     </div>
   `;
 };
 WIRE.reports = (root) => {
-  wireMonthNav(root);
-  $("#r-budgets", root).onclick = openBudgets;
-  $("#r-csv-month", root).onclick = () => exportCSV(txOfMonth(viewMonth), `mi-norte-${viewMonth}.csv`);
+  $$("#rp-mode button", root).forEach(b => b.onclick = () => { reportMode = b.dataset.m; render(); });
+  if (reportMode === "month") wireMonthNav(root);
+  else if (reportMode === "year") {
+    $$("[data-yr]", root).forEach(b => b.onclick = () => {
+      const ny = reportYear + (+b.dataset.yr);
+      if (ny > new Date().getFullYear()) return;
+      reportYear = ny; render();
+    });
+  } else {
+    const f = $("#rp-from", root), tt = $("#rp-to", root);
+    f.onchange = () => { reportFrom = f.value; render(); };
+    tt.onchange = () => { reportTo = tt.value; render(); };
+  }
+  const rb = $("#r-budgets", root); if (rb) rb.onclick = openBudgets;
+  $("#r-csv", root).onclick = () => {
+    let listX, nameX;
+    if (reportMode === "month") { listX = txOfMonth(viewMonth); nameX = `mi-norte-${viewMonth}.csv`; }
+    else if (reportMode === "year") { listX = txOfYear(reportYear); nameX = `mi-norte-${reportYear}.csv`; }
+    else { listX = txInRange(reportFrom, reportTo); nameX = `mi-norte-${reportFrom}_a_${reportTo}.csv`; }
+    exportCSV([...listX].sort((a, b) => new Date(a.date) - new Date(b.date)), nameX);
+  };
 };
 
 /* ---------------- AJUSTES ---------------- */

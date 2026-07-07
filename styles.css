@@ -182,6 +182,13 @@ ul.clean li.row span { display: flex; align-items: center; gap: 10px; }
 .mov-ic.acc-ic { color: var(--label); font-size: 16px; }
 .amt.tr { color: var(--tint); }
 
+/* Filtros y búsqueda */
+.filters { display: flex; gap: 10px; }
+.filters select { flex: 1; min-width: 0; }
+.listnote { font-size: 12px; color: var(--label-2); font-weight: 600; padding: 2px 2px 10px; }
+.rangebar { display: flex; gap: 12px; margin-bottom: 16px; }
+.rangebar .field { flex: 1; margin: 0; }
+
 /* Encabezado de día en la lista */
 .day-h { display: flex; justify-content: space-between; align-items: center; padding: 14px 0 7px; margin-top: 2px;
   font-size: 12px; font-weight: 700; letter-spacing: .03em; text-transform: capitalize; color: var(--label-2); border-bottom: 1px solid var(--sep); }
