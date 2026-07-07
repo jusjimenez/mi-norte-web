@@ -247,6 +247,26 @@ function accountBalance(id) {
 }
 function netWorth() { return DB.accounts.reduce((s, a) => s + accountBalance(a.id), 0); }
 
+/* ---- Perfil financiero (para el simulador de compra) ---- */
+function avgOf(field, nBack = 6) {
+  const vals = [];
+  let mk = shiftMonth(monthKeyOf(new Date()), -1);
+  for (let i = 0; i < nBack; i++) { const t = monthTotals(mk); if (t.count > 0) vals.push(t[field]); mk = shiftMonth(mk, -1); }
+  if (!vals.length) return monthTotals(monthKeyOf(new Date()))[field];
+  return vals.reduce((s, v) => s + v, 0) / vals.length;
+}
+function financeProfile() {
+  const curMk = monthKeyOf(new Date());
+  const recExpense = DB.recurring.filter(r => r.type === "expense").reduce((s, r) => s + r.amount, 0);
+  const recIncome = DB.recurring.filter(r => r.type === "income").reduce((s, r) => s + r.amount, 0);
+  let monthlyIncome = avgOf("income");
+  if (monthlyIncome <= 0) monthlyIncome = recIncome || monthTotals(curMk).income;
+  let avgExpense = avgOf("expense");
+  if (avgExpense <= 0) avgExpense = monthTotals(curMk).expense;
+  const dailyAvg = avgExpense > 0 ? avgExpense / 30 : 0;
+  return { monthlyIncome, avgExpense, fixedMonthly: recExpense, dailyAvg };
+}
+
 /* ---- Metas / deudas ---- */
 function goalPct(g) {
   if (!g.target) return 0;
@@ -427,6 +447,7 @@ SCREENS.home = () => {
       <button class="btn" id="h-expense">− Registrar gasto</button>
       <button class="btn ghost" id="h-income">+ Ingreso</button>
     </div>
+    <button class="btn line sim-cta" id="h-sim">🧮 ¿Puedo permitirme una compra?</button>
 
     <div class="card">
       <div class="row"><h2 style="margin:0">Comparado con ${esc(shortMonthLabel(shiftMonth(viewMonth, -1)))}</h2></div>
@@ -471,6 +492,7 @@ WIRE.home = (root) => {
   $("#h-all", root).onclick = () => { currentTab = "money"; render(); };
   const hg = $("#h-goals", root); if (hg) hg.onclick = openGoals;
   const nwm = $("#nw-manage", root); if (nwm) nwm.onclick = openAccounts;
+  $("#h-sim", root).onclick = openSimulator;
   wireTxRows(root);
 };
 
@@ -1310,6 +1332,87 @@ function showLock() {
     pinBuffer += k; refresh();
     if (pinBuffer.length === 4) setTimeout(check, 120);
   });
+}
+
+/* ---- Simulador de compra ("¿Puedo comprarlo?") ---- */
+function simulate(amount, sel) {
+  if (!amount || amount <= 0) return `<div class="muted">Escribe un monto para ver el impacto.</div>`;
+  const prof = financeProfile();
+  const income = prof.monthlyIncome;
+  const typicalLeftover = income - prof.avgExpense;   // lo que normalmente te sobra al mes
+  const marginAfter = typicalLeftover - amount;
+  const savingsTarget = income * (DB.settings.savingsGoal || 0) / 100;
+
+  let verdict, vcls, dot;
+  if (income <= 0) { verdict = "Sin datos suficientes"; vcls = "amber"; dot = "🟡"; }
+  else if (marginAfter >= savingsTarget && marginAfter >= 0) { verdict = "Cómodo"; vcls = "green"; dot = "🟢"; }
+  else if (marginAfter >= 0) { verdict = "Ajustado"; vcls = "amber"; dot = "🟡"; }
+  else { verdict = "Riesgoso"; vcls = "red"; dot = "🔴"; }
+
+  const rows = [];
+  if (income > 0) rows.push(`Es el <b>${Math.round(amount / income * 100)}%</b> de tu ingreso mensual.`);
+  if (prof.dailyAvg > 0) rows.push(`Equivale a <b>${Math.max(1, Math.round(amount / prof.dailyAvg))} días</b> de tu gasto promedio.`);
+  rows.push(`Margen típico del mes: <b>${fmt(typicalLeftover)}</b> → después de esta compra: <b>${fmt(marginAfter)}</b>.`);
+
+  const capacity = Math.max(0, typicalLeftover);
+  if (capacity > 0) {
+    const months = amount / capacity;
+    const txt = months < 1 ? `${Math.max(1, Math.round(months * 30))} días` : `${months.toFixed(1)} meses`;
+    rows.push(`Retrasaría tus metas de ahorro ~<b>${txt}</b>.`);
+  } else {
+    rows.push(`Hoy no te sobra al mes, así que saldría de tu colchón${accountsExist() ? ` (${fmt(netWorth())} disponibles)` : ""}.`);
+  }
+
+  if (sel.category) {
+    const spent = categoryBreakdown(monthKeyOf(new Date()), "expense").find(b => b.name === sel.category)?.value || 0;
+    const budget = DB.budgets[sel.category] || 0;
+    if (budget > 0) {
+      const after = spent + amount;
+      rows.push(`En <b>${esc(sel.category)}</b> llevas ${fmt(spent)} de ${fmt(budget)}; con esto irías a <b>${fmt(after)}</b> (${Math.round(after / budget * 100)}%).`);
+    }
+  }
+
+  const recurringBox = sel.recurring ? `
+    <div class="sim-annual">
+      <div class="lbl">Costo a futuro (recurrente)</div>
+      <div class="row"><span>Al año</span><strong>${fmt(amount * 12)}</strong></div>
+      ${income > 0 ? `<div class="row"><span>% de tu ingreso anual</span><strong>${Math.round(amount * 12 / (income * 12) * 100)}%</strong></div>` : ""}
+      <div class="row"><span>En 5 años</span><strong>${fmt(amount * 60)}</strong></div>
+    </div>` : "";
+
+  return `
+    <div class="sim-verdict"><span class="pill ${vcls} big">${dot} ${verdict}</span></div>
+    <ul class="sim-list">${rows.map(r => `<li>${r}</li>`).join("")}</ul>
+    ${recurringBox}
+    ${income <= 0 ? `<div class="hint" style="margin-top:12px">Registra algunos ingresos y gastos para estimaciones más precisas.</div>` : ""}
+  `;
+}
+function openSimulator() {
+  const sel = { recurring: false, category: null };
+  openSheet(`
+    <h2>¿Puedo comprarlo?</h2>
+    <p class="hint">Escribe cuánto cuesta y te muestro cómo afecta tu mes y tus metas, usando tu propio historial.</p>
+    <label class="field"><span>¿Cuánto cuesta?</span><input type="number" id="sim-amt" inputmode="decimal" placeholder="0" /></label>
+    <label class="field"><span>¿Qué es? (opcional)</span><input type="text" id="sim-note" placeholder="Ej. audífonos, suscripción…" /></label>
+    <div class="label">Frecuencia</div>
+    <div class="seg" id="sim-freq"><button data-f="once" class="on">Una vez</button><button data-f="month">Cada mes</button></div>
+    <div class="gap"></div>
+    <div class="label">Categoría (opcional)</div>
+    <div class="chips" id="sim-cats">${DB.categories.expense.map(c => `<button data-c="${esc(c)}">${esc(c)}</button>`).join("")}</div>
+    <div class="gap"></div>
+    <div class="card" id="sim-result"></div>
+    <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cerrar</button>
+  `, { fullscreen: true });
+
+  const paint = () => { $("#sim-result").innerHTML = simulate(parseAmount($("#sim-amt").value), sel); };
+  $("#sim-amt").oninput = paint;
+  $$("#sim-freq button").forEach(b => b.onclick = () => { sel.recurring = b.dataset.f === "month"; $$("#sim-freq button").forEach(x => x.classList.toggle("on", x === b)); paint(); });
+  $$("#sim-cats button").forEach(b => b.onclick = () => {
+    sel.category = sel.category === b.dataset.c ? null : b.dataset.c;
+    $$("#sim-cats button").forEach(x => x.classList.toggle("on", x.dataset.c === sel.category));
+    paint();
+  });
+  paint();
 }
 
 /* ===========================================================
