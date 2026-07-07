@@ -122,6 +122,21 @@ input, textarea, select { -webkit-user-select: text; user-select: text; }
 .dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex: none; }
 .dot.in { background: var(--green); } .dot.out { background: var(--red); }
 
+/* ----- Patrimonio (dinero disponible) ----- */
+.networth { position: relative; overflow: hidden; background: var(--card); border: 1px solid var(--card-border);
+  border-radius: 18px; padding: 18px; margin-bottom: 16px; }
+.networth::before { content: ""; position: absolute; left: 0; top: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--grad-a), var(--grad-b)); }
+.nw-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.nw-label { font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--label-2); font-weight: 700; }
+.nw-value { font-size: 34px; font-weight: 800; letter-spacing: -0.03em; margin-top: 6px; font-variant-numeric: tabular-nums; line-height: 1; }
+.nw-value .cur { font-size: .5em; font-weight: 600; color: var(--label-2); vertical-align: .3em; margin-right: 3px; letter-spacing: 0; }
+.nw-accs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 15px; }
+.nw-chip { display: flex; align-items: center; gap: 7px; background: var(--fill); border: 1px solid var(--card-border); border-radius: 999px; padding: 6px 12px; font-size: 13px; }
+.nw-chip .nw-ic { font-size: 13px; }
+.nw-chip .nw-nm { color: var(--label-2); }
+.nw-chip .nw-bal { font-weight: 700; font-variant-numeric: tabular-nums; }
+.nw-chip .nw-bal.neg { color: var(--red); }
+
 /* ----- KPIs ----- */
 .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
 .kpi { background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); padding: 15px; }

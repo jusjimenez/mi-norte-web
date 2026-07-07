@@ -374,6 +374,7 @@ SCREENS.home = () => {
 
   return `
     <div class="head"><h1>Resumen</h1><p>Tus finanzas de un vistazo.</p></div>
+    ${accountsExist() ? networthBannerHTML() : ""}
     ${monthNav()}
 
     ${showReminder() ? `
@@ -437,7 +438,6 @@ SCREENS.home = () => {
         </div>`).join("")}
     </div>` : ""}
 
-    ${accountsExist() ? accountsCardHTML() : ""}
     ${DB.goals.length ? goalsCardHTML() : ""}
 
     <div class="card">
@@ -461,6 +461,7 @@ WIRE.home = (root) => {
   $("#h-income", root).onclick = () => openTx("income");
   $("#h-all", root).onclick = () => { currentTab = "money"; render(); };
   const hg = $("#h-goals", root); if (hg) hg.onclick = openGoals;
+  const nwm = $("#nw-manage", root); if (nwm) nwm.onclick = openAccounts;
   wireTxRows(root);
 };
 
@@ -1126,6 +1127,21 @@ function accountsCardHTML() {
       <div class="grow"><div class="t">${esc(a.name)}</div><div class="s">${esc(a.kind)}</div></div>
       <div class="amt ${accountBalance(a.id) < 0 ? "out" : ""}">${fmt(accountBalance(a.id))}</div>
     </div>`).join("")}
+  </div>`;
+}
+function networthBannerHTML() {
+  const nw = netWorth();
+  return `<div class="networth">
+    <div class="nw-top">
+      <div>
+        <div class="nw-label">Dinero disponible</div>
+        <div class="nw-value">${nw < 0 ? "−" : ""}${fmtHero(Math.abs(nw))}</div>
+      </div>
+      <button class="linkbtn" id="nw-manage">Cuentas</button>
+    </div>
+    <div class="nw-accs">
+      ${DB.accounts.map(a => { const bal = accountBalance(a.id); return `<div class="nw-chip"><span class="nw-ic">${ACCOUNT_ICON[a.kind] || "◆"}</span><span class="nw-nm">${esc(a.name)}</span><span class="nw-bal ${bal < 0 ? "neg" : ""}">${fmt(bal)}</span></div>`; }).join("")}
+    </div>
   </div>`;
 }
 function openAccounts() {
