@@ -50,7 +50,7 @@ const SEED = {
   recurring: [],      // {id, type, amount, category, note, day}
   accounts: [],       // {id, name, kind:'efectivo'|'banco'|'tarjeta'|'otro', opening}
   goals: [],          // {id, name, kind:'ahorro'|'deuda', target, saved}
-  settings: { currency: "CRC", locale: "es-CR", savingsGoal: 20, reminders: true, reminderDismissed: "", gate: true, gateAM: "", gatePM: "", pin: "" },
+  settings: { currency: "CRC", locale: "es-CR", decimals: "auto", savingsGoal: 20, reminders: true, reminderDismissed: "", gate: true, gateAM: "", gatePM: "", pin: "" },
 };
 
 const ACCOUNT_KINDS = ["efectivo", "banco", "tarjeta", "otro"];
@@ -100,24 +100,33 @@ function migrateV1(old) {
 function save() { localStorage.setItem(STORE_KEY, JSON.stringify(DB)); }
 
 /* ---------- Helpers de formato ---------- */
+/* Decimales prácticos por moneda para el modo "Automático" */
+const CURRENCY_DEC = { CRC: 0, CLP: 0, COP: 0, USD: 2, EUR: 2, MXN: 2, PEN: 2 };
+function moneyFractionOpts() {
+  const d = DB.settings.decimals;
+  let fd;
+  if (d === 0 || d === "0") fd = 0;
+  else if (d === 2 || d === "2") fd = 2;
+  else fd = CURRENCY_DEC[DB.settings.currency] ?? 2; // "auto": convención práctica de la moneda
+  return { minimumFractionDigits: fd, maximumFractionDigits: fd };
+}
 function money(n) {
   const s = DB.settings;
   try {
-    return new Intl.NumberFormat(s.locale || "es-CR", {
-      style: "currency", currency: s.currency || "CRC", maximumFractionDigits: 0,
-    }).format(Math.round(n || 0));
+    return new Intl.NumberFormat(s.locale || "es-CR", { style: "currency", currency: s.currency || "CRC", ...moneyFractionOpts() }).format(n || 0);
   } catch (e) {
-    return new Intl.NumberFormat("es-CR", { style: "currency", currency: "CRC", maximumFractionDigits: 0 }).format(Math.round(n || 0));
+    return new Intl.NumberFormat("es-CR", { style: "currency", currency: "CRC" }).format(n || 0);
   }
 }
 const fmt = (n) => money(n);
 function fmtHero(n) {
   const s = DB.settings;
   try {
-    const parts = new Intl.NumberFormat(s.locale || "es-CR", { style: "currency", currency: s.currency || "CRC", maximumFractionDigits: 0 }).formatToParts(Math.round(n || 0));
+    const parts = new Intl.NumberFormat(s.locale || "es-CR", { style: "currency", currency: s.currency || "CRC", ...moneyFractionOpts() }).formatToParts(n || 0);
     return parts.map(p => p.type === "currency" ? `<span class="cur">${esc(p.value)}</span>` : esc(p.value)).join("");
   } catch (e) { return esc(fmt(n)); }
 }
+function parseAmount(v) { return parseFloat(String(v || "").replace(",", ".")) || 0; }
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -768,6 +777,16 @@ SCREENS.settings = () => {
     </div>
 
     <div class="card">
+      <h2>Decimales</h2>
+      <div class="seg" id="s-dec">
+        <button data-d="auto" class="${String(s.decimals || "auto") === "auto" ? "on" : ""}">Automático</button>
+        <button data-d="0" class="${String(s.decimals) === "0" ? "on" : ""}">Sin decimales</button>
+        <button data-d="2" class="${String(s.decimals) === "2" ? "on" : ""}">2 decimales</button>
+      </div>
+      <div class="hint">Automático usa lo habitual de tu moneda (el colón no suele usar decimales; el dólar y el euro sí, con centavos).</div>
+    </div>
+
+    <div class="card">
       <h2>Meta de ahorro</h2>
       <label class="field"><span>Porcentaje de tus ingresos que quieres ahorrar</span>
         <input type="number" id="s-goal" value="${s.savingsGoal || 0}" min="0" max="100" inputmode="numeric" /></label>
@@ -857,6 +876,9 @@ WIRE.settings = (root) => {
   $("#s-goal", root).onchange = (e) => {
     DB.settings.savingsGoal = Math.max(0, Math.min(100, +e.target.value || 0)); save(); toast("Guardado");
   };
+  $$("#s-dec button", root).forEach(b => b.onclick = () => {
+    DB.settings.decimals = b.dataset.d === "auto" ? "auto" : +b.dataset.d; save(); render(); toast("Decimales actualizados");
+  });
   $("#s-reminders", root).onchange = (e) => {
     DB.settings.reminders = e.target.checked; save(); toast(e.target.checked ? "Recordatorio activado" : "Recordatorio desactivado");
   };
@@ -1010,7 +1032,7 @@ function openBudgets() {
     <div class="card">
       ${DB.categories.expense.map(c => `
         <label class="field bud-field"><span><i class="cdot" style="background:${catColor(c, "expense")}"></i>${esc(c)}</span>
-          <input type="number" data-bud="${esc(c)}" inputmode="numeric" placeholder="0" value="${DB.budgets[c] || ""}" /></label>
+          <input type="number" data-bud="${esc(c)}" inputmode="decimal" placeholder="0" value="${DB.budgets[c] || ""}" /></label>
       `).join("")}
     </div>
     <button class="btn" id="bud-save">Guardar presupuestos</button>
@@ -1019,7 +1041,7 @@ function openBudgets() {
 
   $("#bud-save").onclick = () => {
     $$("[data-bud]").forEach(inp => {
-      const v = +inp.value || 0;
+      const v = parseAmount(inp.value);
       if (v > 0) DB.budgets[inp.dataset.bud] = v; else delete DB.budgets[inp.dataset.bud];
     });
     save(); closeSheet(); render(); toast("Presupuestos guardados");
@@ -1161,7 +1183,7 @@ function openAccounts() {
         <div class="label">Tipo</div>
         <div class="seg" id="acc-kind">${ACCOUNT_KINDS.map((k, i) => `<button data-k="${k}" class="${i === 0 ? "on" : ""}">${k[0].toUpperCase() + k.slice(1)}</button>`).join("")}</div>
         <div class="gap"></div>
-        <label class="field"><span>Saldo inicial</span><input type="number" id="acc-open" inputmode="numeric" placeholder="0" /></label>
+        <label class="field"><span>Saldo inicial</span><input type="number" id="acc-open" inputmode="decimal" placeholder="0" /></label>
         <button class="btn" id="acc-add">Agregar cuenta</button>
       </div>
     `, { fullscreen: true });
@@ -1169,7 +1191,7 @@ function openAccounts() {
     $$("#acc-kind button").forEach(b => b.onclick = () => { kind = b.dataset.k; $$("#acc-kind button").forEach(x => x.classList.toggle("on", x === b)); });
     $("#acc-add").onclick = () => {
       const name = $("#acc-name").value.trim(); if (!name) return toast("Ponle un nombre");
-      DB.accounts.push({ id: uid(), name, kind, opening: +$("#acc-open").value || 0 }); save(); draw();
+      DB.accounts.push({ id: uid(), name, kind, opening: parseAmount($("#acc-open").value) }); save(); draw();
     };
     $$("[data-del-acc]").forEach(b => b.onclick = () => {
       const id = b.dataset.delAcc;
@@ -1213,8 +1235,8 @@ function openGoals() {
         <div class="seg" id="goal-kind"><button data-k="ahorro" class="on">Ahorro</button><button data-k="deuda">Deuda</button></div>
         <div class="gap"></div>
         <label class="field"><span>Nombre</span><input type="text" id="goal-name" placeholder="Ej. Fondo de emergencia" /></label>
-        <label class="field"><span>Monto objetivo</span><input type="number" id="goal-target" inputmode="numeric" placeholder="0" /></label>
-        <label class="field"><span>Ya llevas (opcional)</span><input type="number" id="goal-saved" inputmode="numeric" placeholder="0" /></label>
+        <label class="field"><span>Monto objetivo</span><input type="number" id="goal-target" inputmode="decimal" placeholder="0" /></label>
+        <label class="field"><span>Ya llevas (opcional)</span><input type="number" id="goal-saved" inputmode="decimal" placeholder="0" /></label>
         <button class="btn" id="goal-add">Crear meta</button>
       </div>
     `, { fullscreen: true });
@@ -1222,8 +1244,8 @@ function openGoals() {
     $$("#goal-kind button").forEach(b => b.onclick = () => { kind = b.dataset.k; $$("#goal-kind button").forEach(x => x.classList.toggle("on", x === b)); });
     $("#goal-add").onclick = () => {
       const name = $("#goal-name").value.trim(); if (!name) return toast("Ponle un nombre");
-      const target = +$("#goal-target").value || 0; if (target <= 0) return toast("Escribe el objetivo");
-      DB.goals.push({ id: uid(), name, kind, target, saved: +$("#goal-saved").value || 0 }); save(); draw();
+      const target = parseAmount($("#goal-target").value); if (target <= 0) return toast("Escribe el objetivo");
+      DB.goals.push({ id: uid(), name, kind, target, saved: parseAmount($("#goal-saved").value) }); save(); draw();
     };
     $$("[data-add-goal]").forEach(b => b.onclick = () => {
       const g = DB.goals.find(x => x.id === b.dataset.addGoal); if (!g) return;
