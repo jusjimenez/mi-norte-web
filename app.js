@@ -415,7 +415,7 @@ function txRow(t, opts = {}) {
       <span class="mov-ic" style="color:${col}">${inc ? "↑" : "↓"}</span>
       <div class="grow">
         <div class="t">${esc(t.note || t.category || (inc ? "Ingreso" : "Gasto"))}</div>
-        <div class="s">${new Date(t.date).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short" })} · ${esc(t.category || "Otro")}</div>
+        <div class="s">${new Date(t.date).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short" })} · ${esc(t.category || "Otro")}${t.ref ? ` · N.° ${esc(t.ref)}` : ""}</div>
       </div>
       <div class="amt ${inc ? "in" : "out"}">${inc ? "+" : "−"}${fmt(t.amount)}</div>
       ${opts.deletable ? `<button class="btn small soft-danger" data-del-tx="${t.id}" aria-label="Eliminar">×</button>` : ""}
@@ -716,6 +716,8 @@ function openTx(type, editId) {
       <input type="text" id="tx-note" placeholder="${isIncome ? "Salario, venta…" : "¿En qué?"}" value="${editing ? esc(editing.note) : ""}" /></label>
     <label class="field"><span>Fecha</span>
       <input type="date" id="tx-date" value="${dateInputValue(editing ? editing.date : todayISO())}" /></label>
+    <label class="field"><span>N.° de comprobante / referencia (opcional)</span>
+      <input type="text" id="tx-ref" placeholder="Ej. factura 00123" value="${editing ? esc(editing.ref) : ""}" /></label>
     <div class="label">Categoría</div>
     <div class="chips" id="tx-cats">
       ${cats.map(c => `<button data-c="${esc(c)}" class="${c === sel.category ? "on" : ""}">${esc(c)}</button>`).join("")}
@@ -734,7 +736,7 @@ function openTx(type, editId) {
     if (amt <= 0) return toast("Escribe un monto");
     const dv = $("#tx-date").value;
     const date = dv ? new Date(dv + "T12:00:00").toISOString() : todayISO();
-    const data = { type: isIncome ? "income" : "expense", amount: amt, category: sel.category, note: $("#tx-note").value.trim() };
+    const data = { type: isIncome ? "income" : "expense", amount: amt, category: sel.category, note: $("#tx-note").value.trim(), ref: $("#tx-ref").value.trim() };
     if (editing) { Object.assign(editing, data, { date }); }
     else { DB.transactions.push({ id: uid(), date, ...data }); }
     save(); closeSheet(); render();
@@ -866,7 +868,7 @@ function downloadBlob(blob, name) {
 }
 function exportCSV(rows, name) {
   if (!rows.length) return toast("No hay datos para exportar");
-  const head = ["Fecha", "Tipo", "Categoría", "Descripción", "Monto"];
+  const head = ["Fecha", "Tipo", "Categoría", "Descripción", "Comprobante", "Monto"];
   const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const lines = [head.join(",")];
   rows.forEach(t => {
@@ -875,6 +877,7 @@ function exportCSV(rows, name) {
       t.type === "income" ? "Ingreso" : "Gasto",
       t.category || "Otro",
       t.note || "",
+      t.ref || "",
       t.amount,
     ].map(cell).join(","));
   });
