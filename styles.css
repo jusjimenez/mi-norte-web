@@ -418,6 +418,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--t
   -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); transition: transform .08s, background .15s;
 }
 .key:active { transform: scale(.94); background: rgba(255,255,255,.22); }
+.lock-forgot { margin-top: 26px; background: none; border: none; color: rgba(255,255,255,.6); font: inherit; font-size: 14px; cursor: pointer; text-decoration: underline; }
 .shake { animation: shake .42s; }
 @keyframes shake { 0%,100% { transform: translateX(0); } 20%,60% { transform: translateX(-8px); } 40%,80% { transform: translateX(8px); } }
 

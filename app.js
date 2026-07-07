@@ -1153,8 +1153,14 @@ function showLock() {
       <div class="lock-sub">Ingresa tu PIN</div>
       <div class="pin-dots" id="pin-dots">${dots()}</div>
       <div class="keypad">${keys.map(k => k === "" ? `<span></span>` : `<button class="key" data-k="${k}">${k}</button>`).join("")}</div>
+      <button class="lock-forgot" id="lock-forgot">¿Olvidaste tu PIN?</button>
     </div>`;
   document.body.appendChild(el);
+  $("#lock-forgot", el).onclick = () => {
+    if (confirm("Si olvidaste tu PIN, la única forma de entrar es borrar todos los datos de la app. ¿Borrar y continuar?")) {
+      DB = structuredClone(SEED); save(); el.remove(); render();
+    }
+  };
   const refresh = () => { $("#pin-dots", el).innerHTML = dots(); };
   const check = async () => {
     const h = await sha256(pinBuffer);
@@ -1180,15 +1186,18 @@ function downloadBlob(blob, name) {
 }
 function exportCSV(rows, name) {
   if (!rows.length) return toast("No hay datos para exportar");
-  const head = ["Fecha", "Tipo", "Categoría", "Descripción", "Comprobante", "Monto"];
+  const head = ["Fecha", "Tipo", "Categoría", "Descripción", "Cuenta", "Comprobante", "Monto"];
   const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const lines = [head.join(",")];
   rows.forEach(t => {
+    const tipo = t.type === "income" ? "Ingreso" : t.type === "transfer" ? "Transferencia" : "Gasto";
+    const cuenta = t.type === "transfer" ? `${accountName(t.from)} → ${accountName(t.to)}` : accountName(t.account);
     lines.push([
       dateInputValue(t.date),
-      t.type === "income" ? "Ingreso" : "Gasto",
-      t.category || "Otro",
+      tipo,
+      t.type === "transfer" ? "" : (t.category || "Otro"),
       t.note || "",
+      cuenta,
       t.ref || "",
       t.amount,
     ].map(cell).join(","));
