@@ -139,6 +139,34 @@ input, textarea, select { -webkit-user-select: text; user-select: text; }
 .hero-sub .dot.in { background: rgba(255,255,255,.95); }
 .hero-sub .dot.out { background: rgba(255,255,255,.55); }
 
+/* ----- Recordatorio (aviso in-app) ----- */
+.reminder {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--tint-soft); border: .5px solid var(--tint);
+  border-radius: var(--radius); padding: 13px 14px; margin-bottom: 16px; cursor: pointer;
+  transition: transform .08s ease, filter .15s;
+}
+.reminder:active { transform: scale(.99); filter: brightness(.98); }
+.rem-ic { font-size: 20px; flex: none; }
+.rem-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.rem-txt strong { font-size: 15px; color: var(--tint); }
+.rem-txt span { font-size: 13px; color: var(--label-2); }
+.rem-x {
+  flex: none; background: transparent; border: none; color: var(--label-2);
+  font-size: 15px; cursor: pointer; padding: 8px; border-radius: 999px; line-height: 1;
+}
+
+/* ----- Interruptor (toggle iOS) ----- */
+.switch { position: relative; display: inline-block; width: 51px; height: 31px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .sl { position: absolute; inset: 0; background: var(--fill); border-radius: 999px; transition: background .2s; }
+.switch .sl::before {
+  content: ""; position: absolute; width: 27px; height: 27px; left: 2px; top: 2px;
+  background: #fff; border-radius: 50%; transition: transform .2s; box-shadow: 0 2px 5px rgba(0,0,0,.25);
+}
+.switch input:checked + .sl { background: var(--green); }
+.switch input:checked + .sl::before { transform: translateX(20px); }
+
 /* ----- KPIs ----- */
 .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
 .kpi { background: var(--card); border-radius: var(--radius); padding: 15px; box-shadow: var(--shadow-card); }

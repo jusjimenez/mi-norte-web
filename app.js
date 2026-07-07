@@ -31,7 +31,7 @@ const SEED = {
   categories: structuredClone(DEFAULT_CATEGORIES),
   budgets: {},        // {categoria: limiteMensual}
   recurring: [],      // {id, type, amount, category, note, day}
-  settings: { currency: "CRC", locale: "es-CR", savingsGoal: 20 },
+  settings: { currency: "CRC", locale: "es-CR", savingsGoal: 20, reminders: true, reminderDismissed: "" },
 };
 
 /* ---------- Estado / persistencia ---------- */
@@ -116,6 +116,12 @@ function dateInputValue(iso) {
 }
 function daysInMonth(mk) { const [y, m] = mk.split("-").map(Number); return new Date(y, m, 0).getDate(); }
 function isCurrentMonth(mk) { return mk === monthKeyOf(new Date()); }
+function todayKeyStr() { return dateInputValue(new Date().toISOString()); }
+function registeredToday() { return DB.transactions.some(t => dateInputValue(t.date) === todayKeyStr()); }
+function showReminder() {
+  return DB.settings.reminders !== false && isCurrentMonth(viewMonth)
+    && !registeredToday() && DB.settings.reminderDismissed !== todayKeyStr();
+}
 
 /* ---------- Cálculos ---------- */
 function txOfMonth(mk) {
@@ -254,6 +260,13 @@ SCREENS.home = () => {
     <div class="head"><h1>Resumen</h1><p>Tus finanzas de un vistazo.</p></div>
     ${monthNav()}
 
+    ${showReminder() ? `
+    <div class="reminder" id="reminder">
+      <div class="rem-ic">🔔</div>
+      <div class="rem-txt"><strong>Aún no registras movimientos hoy</strong><span>Un toque para mantener tus finanzas al día.</span></div>
+      <button class="rem-x" id="rem-dismiss" aria-label="Descartar">✕</button>
+    </div>` : ""}
+
     <div class="hero ${balancePos ? "pos" : "neg"}">
       <div class="hero-label">Balance del mes</div>
       <div class="hero-value">${balancePos ? "" : "−"}${fmt(Math.abs(t.balance))}</div>
@@ -310,6 +323,14 @@ SCREENS.home = () => {
 };
 WIRE.home = (root) => {
   wireMonthNav(root);
+  const rem = $("#reminder", root);
+  if (rem) {
+    rem.onclick = (e) => { if (e.target.id !== "rem-dismiss") openTx("expense"); };
+    $("#rem-dismiss", root).onclick = (e) => {
+      e.stopPropagation();
+      DB.settings.reminderDismissed = todayKeyStr(); save(); render();
+    };
+  }
   $("#h-expense", root).onclick = () => openTx("expense");
   $("#h-income", root).onclick = () => openTx("income");
   $("#h-all", root).onclick = () => { currentTab = "money"; render(); };
@@ -490,6 +511,13 @@ SCREENS.settings = () => {
     </div>
 
     <div class="card">
+      <div class="row"><h2 style="margin:0">Recordatorio diario</h2>
+        <label class="switch"><input type="checkbox" id="s-reminders" ${s.reminders !== false ? "checked" : ""} /><span class="sl"></span></label>
+      </div>
+      <div class="hint">Muestra un aviso en el Resumen cuando no has registrado ningún movimiento en el día.</div>
+    </div>
+
+    <div class="card">
       <div class="row"><h2 style="margin:0">Categorías</h2></div>
       <div class="hint">Personaliza tus categorías de gastos e ingresos.</div>
       <div class="gap"></div>
@@ -539,6 +567,9 @@ WIRE.settings = (root) => {
   };
   $("#s-goal", root).onchange = (e) => {
     DB.settings.savingsGoal = Math.max(0, Math.min(100, +e.target.value || 0)); save(); toast("Guardado");
+  };
+  $("#s-reminders", root).onchange = (e) => {
+    DB.settings.reminders = e.target.checked; save(); toast(e.target.checked ? "Recordatorio activado" : "Recordatorio desactivado");
   };
   $("#s-cat-expense", root).onclick = () => openCategories("expense");
   $("#s-cat-income", root).onclick = () => openCategories("income");
