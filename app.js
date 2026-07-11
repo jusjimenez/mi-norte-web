@@ -753,10 +753,12 @@ SCREENS.reports = () => {
     </div>` : ""}
 
     <div class="card">
-      <h2>Exportar reporte</h2>
-      <div class="hint">Descarga los movimientos de ${esc(periodLabel)} como CSV para abrir en Excel/Sheets.</div>
+      <h2>Exportar informe</h2>
+      <div class="hint">Informe completo de ${esc(periodLabel)} con gráficas y resúmenes, o los movimientos en CSV.</div>
       <div class="gap"></div>
-      <button class="btn ghost" id="r-csv">Exportar (CSV)</button>
+      <button class="btn" id="r-pdf">📄 Descargar informe (PDF)</button>
+      <div class="gap"></div>
+      <button class="btn line" id="r-csv">Exportar movimientos (CSV)</button>
     </div>
   `;
 };
@@ -775,6 +777,7 @@ WIRE.reports = (root) => {
     tt.onchange = () => { reportTo = tt.value; render(); };
   }
   const rb = $("#r-budgets", root); if (rb) rb.onclick = openBudgets;
+  $("#r-pdf", root).onclick = openReportPreview;
   $("#r-csv", root).onclick = () => {
     let listX, nameX;
     if (reportMode === "month") { listX = txOfMonth(viewMonth); nameX = `mi-norte-${viewMonth}.csv`; }
@@ -1444,6 +1447,153 @@ function exportCSV(rows, name) {
   const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
   downloadBlob(blob, name);
   toast("CSV descargado");
+}
+
+/* ===========================================================
+   INFORME PDF (vía impresión del sistema → Guardar como PDF)
+   =========================================================== */
+function reportContext() {
+  const loc = DB.settings.locale || "es-CR";
+  const mode = reportMode;
+  if (mode === "month") {
+    return { mode, list: txOfMonth(viewMonth), periodLabel: monthLabel(viewMonth),
+      trend: lastMonths(6).map(mk => ({ label: shortMonthLabel(mk), ...monthTotals(mk) })) };
+  }
+  if (mode === "year") {
+    return { mode, list: txOfYear(reportYear), periodLabel: String(reportYear),
+      trend: Array.from({ length: 12 }, (_, m) => { const mk = `${reportYear}-${String(m + 1).padStart(2, "0")}`; return { label: new Date(reportYear, m, 1).toLocaleDateString(loc, { month: "short" }), ...monthTotals(mk) }; }) };
+  }
+  const list = txInRange(reportFrom, reportTo);
+  const f = new Date(reportFrom + "T12:00:00").toLocaleDateString(loc, { day: "numeric", month: "short", year: "numeric" });
+  const tt = new Date(reportTo + "T12:00:00").toLocaleDateString(loc, { day: "numeric", month: "short", year: "numeric" });
+  return { mode, list, periodLabel: `${f} – ${tt}`, trend: null };
+}
+function reportDonut(segments) {
+  const size = 150, stroke = 26, r = (size - stroke) / 2, c = 2 * Math.PI * r;
+  let off = 0; const total = segments.reduce((s, x) => s + x.value, 0) || 1;
+  const arcs = segments.length ? segments.map(s => {
+    const len = s.value / total * c;
+    const el = `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${stroke}" stroke-dasharray="${len} ${c - len}" stroke-dashoffset="${-off}" transform="rotate(-90 ${size / 2} ${size / 2})"/>`;
+    off += len; return el;
+  }).join("") : `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="#e5e7eb" stroke-width="${stroke}"/>`;
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">${arcs}</svg>`;
+}
+function reportBars(series) {
+  if (!series) return "";
+  const max = Math.max(1, ...series.map(s => Math.max(s.income, s.expense)));
+  return `<div class="rp-trend">${series.map(s => `<div class="rp-tcol"><div class="rp-tbars"><span class="rp-in" style="height:${Math.round(s.income / max * 100)}%"></span><span class="rp-out" style="height:${Math.round(s.expense / max * 100)}%"></span></div><div class="rp-tx">${esc(s.label)}</div></div>`).join("")}</div>`;
+}
+function buildReportHTML(ctx) {
+  const loc = DB.settings.locale || "es-CR";
+  const { list, periodLabel, mode, trend } = ctx;
+  const t = totalsOf(list);
+  const bd = breakdownOf(list, "expense");
+  const inc = breakdownOf(list, "income");
+  const gen = new Date().toLocaleString(loc, { dateStyle: "long", timeStyle: "short" });
+
+  const kpis = [
+    ["Ingresos", fmt(t.income), "#15803d"],
+    ["Gastos", fmt(t.expense), "#b91c1c"],
+    ["Balance", fmt(t.balance), t.balance < 0 ? "#b91c1c" : "#0f172a"],
+    ["Tasa de ahorro", `${Math.round(t.savingsRate)}%`, "#0f172a"],
+  ];
+  if (accountsExist()) kpis.push(["Patrimonio", fmt(netWorth()), "#0f172a"]);
+  if (mode === "month") { const pr = projectionForMonth(viewMonth); if (pr != null) kpis.push(["Proyección fin de mes", fmt(pr), "#0f172a"]); }
+
+  const catTable = (rows) => rows.length ? `<table class="rp-table"><thead><tr><th>Categoría</th><th class="rp-num">Monto</th><th class="rp-num">%</th></tr></thead><tbody>${rows.map(r => `<tr><td><span class="rp-dot" style="background:${r.color}"></span>${esc(r.name)}</td><td class="rp-num">${fmt(r.value)}</td><td class="rp-num">${Math.round(r.pct)}%</td></tr>`).join("")}</tbody></table>` : `<p class="rp-empty">Sin datos en este periodo.</p>`;
+
+  const accountsSection = accountsExist() ? `
+    <div class="rp-section">
+      <h3>Cuentas</h3>
+      <table class="rp-table"><thead><tr><th>Cuenta</th><th>Tipo</th><th class="rp-num">Saldo</th></tr></thead><tbody>
+        ${DB.accounts.map(a => `<tr><td>${esc(a.name)}</td><td>${esc(a.kind)}</td><td class="rp-num">${fmt(accountBalance(a.id))}</td></tr>`).join("")}
+        <tr class="rp-total"><td colspan="2">Patrimonio total</td><td class="rp-num">${fmt(netWorth())}</td></tr>
+      </tbody></table>
+    </div>` : "";
+
+  const goalsSection = DB.goals.length ? `
+    <div class="rp-section">
+      <h3>Metas y deudas</h3>
+      <table class="rp-table"><thead><tr><th>Meta</th><th>Tipo</th><th class="rp-num">Progreso</th><th class="rp-num">%</th></tr></thead><tbody>
+        ${DB.goals.map(g => `<tr><td>${esc(g.name)}</td><td>${g.kind === "deuda" ? "Deuda" : "Ahorro"}</td><td class="rp-num">${fmt(g.saved || 0)} / ${fmt(g.target || 0)}</td><td class="rp-num">${Math.round(goalPct(g))}%</td></tr>`).join("")}
+      </tbody></table>
+    </div>` : "";
+
+  const budgets = budgetStatus(viewMonth);
+  const budgetSection = (mode === "month" && budgets.length) ? `
+    <div class="rp-section">
+      <h3>Presupuestos del mes</h3>
+      <table class="rp-table"><thead><tr><th>Categoría</th><th class="rp-num">Gastado</th><th class="rp-num">Límite</th><th class="rp-num">%</th></tr></thead><tbody>
+        ${budgets.map(b => `<tr><td>${esc(b.name)}</td><td class="rp-num" style="color:${b.over ? "#b91c1c" : "#0f172a"}">${fmt(b.spent)}</td><td class="rp-num">${fmt(b.limit)}</td><td class="rp-num">${Math.round(b.pct)}%${b.over ? " ⚠" : ""}</td></tr>`).join("")}
+      </tbody></table>
+    </div>` : "";
+
+  const movs = [...list].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const movRows = movs.map(m => {
+    const tipo = m.type === "income" ? "Ingreso" : m.type === "transfer" ? "Transferencia" : "Gasto";
+    const cat = m.type === "transfer" ? `${accountName(m.from)} → ${accountName(m.to)}` : (m.category || "Otro");
+    const acc = m.type === "transfer" ? "" : accountName(m.account);
+    const sign = m.type === "income" ? "+" : m.type === "expense" ? "−" : "";
+    const color = m.type === "income" ? "#15803d" : m.type === "expense" ? "#b91c1c" : "#0f766e";
+    return `<tr><td>${dateInputValue(m.date)}</td><td>${tipo}</td><td>${esc(cat)}</td><td>${esc(acc)}</td><td>${esc(m.note || "")}${m.ref ? ` <span class="rp-ref">N.° ${esc(m.ref)}</span>` : ""}</td><td class="rp-num" style="color:${color}">${sign}${fmt(m.amount)}</td></tr>`;
+  }).join("");
+
+  return `
+    <div class="rp-head">
+      <div class="rp-brand">MI NORTE</div>
+      <div class="rp-title">Informe financiero</div>
+      <div class="rp-period">${esc(periodLabel)}</div>
+      <div class="rp-gen">Generado el ${esc(gen)}</div>
+    </div>
+
+    <div class="rp-section">
+      <h3>Resumen</h3>
+      <div class="rp-kpis">
+        ${kpis.map(k => `<div class="rp-kpi"><div class="rp-k">${esc(k[0])}</div><div class="rp-v" style="color:${k[2]}">${k[1]}</div></div>`).join("")}
+      </div>
+    </div>
+
+    <div class="rp-section">
+      <h3>Gasto por categoría</h3>
+      <div class="rp-cat-row">
+        <div>${reportDonut(bd)}</div>
+        <div style="flex:1;min-width:240px">${catTable(bd)}</div>
+      </div>
+    </div>
+
+    <div class="rp-section">
+      <h3>Ingresos por fuente</h3>
+      ${catTable(inc)}
+    </div>
+
+    ${trend ? `<div class="rp-section"><h3>Tendencia (${mode === "year" ? "12 meses" : "6 meses"})</h3>${reportBars(trend)}<div class="rp-legend"><span><i style="background:#16a34a"></i>Ingresos</span><span><i style="background:#dc2626"></i>Gastos</span></div></div>` : ""}
+
+    ${accountsSection}
+    ${goalsSection}
+    ${budgetSection}
+
+    <div class="rp-section">
+      <h3>Movimientos del periodo (${movs.length})</h3>
+      ${movs.length ? `<table class="rp-table"><thead><tr><th>Fecha</th><th>Tipo</th><th>Categoría</th><th>Cuenta</th><th>Descripción</th><th class="rp-num">Monto</th></tr></thead><tbody>${movRows}</tbody></table>` : `<p class="rp-empty">Sin movimientos en este periodo.</p>`}
+    </div>
+
+    <div class="rp-foot">MI NORTE · Informe generado automáticamente · Documento confidencial</div>
+  `;
+}
+function openReportPreview() {
+  const ctx = reportContext();
+  const el = document.createElement("div");
+  el.className = "report-view"; el.id = "report-view";
+  el.innerHTML = `
+    <div class="report-bar">
+      <button class="btn line small" id="rp-close">Cerrar</button>
+      <strong>Vista previa del informe</strong>
+      <button class="btn small" id="rp-print">Descargar PDF</button>
+    </div>
+    <div class="report-scroll"><div class="report-sheet">${buildReportHTML(ctx)}</div></div>`;
+  document.body.appendChild(el);
+  $("#rp-close", el).onclick = () => el.remove();
+  $("#rp-print", el).onclick = () => window.print();
 }
 
 /* ===========================================================
