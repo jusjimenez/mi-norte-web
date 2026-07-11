@@ -56,6 +56,38 @@ const SEED = {
 const ACCOUNT_KINDS = ["efectivo", "banco", "tarjeta", "otro"];
 const ACCOUNT_ICON = { efectivo: "💵", banco: "🏦", tarjeta: "💳", otro: "◆" };
 
+/* Ayudas breves (botón "?") */
+const HELP = {
+  balance: {
+    title: "Balance del mes",
+    html: `Es <b>lo que entró menos lo que salió</b> este mes.
+      <div class="help-eq">Ingresos − Gastos del mes</div>
+      <ul>
+        <li>No incluye tus saldos iniciales (dinero que ya tenías).</li>
+        <li>Las transferencias entre cuentas no cuentan.</li>
+        <li>Cambia según el mes que veas con las flechas ‹ ›.</li>
+      </ul>`,
+  },
+  patrimonio: {
+    title: "Dinero disponible",
+    html: `Es el <b>dinero que tienes ahora</b>, sumando el saldo de todas tus cuentas.
+      <div class="help-eq">Saldo inicial + ingresos − gastos ± transferencias</div>
+      <ul>
+        <li>Sí incluye tus saldos iniciales.</li>
+        <li>No depende del mes: es tu foto actual.</li>
+      </ul>`,
+  },
+  savings: {
+    title: "Tasa de ahorro",
+    html: `Qué parte de tus ingresos <b>te quedó</b> este mes.
+      <div class="help-eq">Balance del mes ÷ Ingresos del mes</div>
+      <ul>
+        <li>Tu meta la defines en Ajustes.</li>
+        <li>Los saldos iniciales no la afectan.</li>
+      </ul>`,
+  },
+};
+
 /* ---------- Estado / persistencia ---------- */
 let DB = load();
 let currentTab = "home";
@@ -425,7 +457,7 @@ SCREENS.home = () => {
     </div>` : ""}
 
     <div class="hero">
-      <div class="hero-label">Balance del mes</div>
+      <div class="hero-label">Balance del mes ${helpBtn("balance")}</div>
       <div class="hero-value">${balancePos ? "" : "−"}${fmtHero(Math.abs(t.balance))}</div>
       ${(prev.count || hasHistory) ? `<div class="hero-delta ${balDelta > 0 ? "up" : balDelta < 0 ? "down" : "flat"}">${balDelta > 0 ? "▲" : balDelta < 0 ? "▼" : "•"} ${fmt(Math.abs(balDelta))} <span class="muted">vs. ${esc(shortMonthLabel(prevMk))}</span></div>` : ""}
       <div class="hero-sub">
@@ -436,7 +468,7 @@ SCREENS.home = () => {
 
     <div class="kpis">
       <div class="kpi">
-        <div class="kpi-k">Tasa de ahorro</div>
+        <div class="kpi-k">Tasa de ahorro ${helpBtn("savings")}</div>
         <div class="kpi-ring">${ring(t.savingsRate)}<div class="kpi-ringv">${Math.round(t.savingsRate)}%</div></div>
         <div class="kpi-foot">${goal ? (t.savingsRate >= goal ? `Meta ${goal}% · superada` : `Meta ${goal}%`) : "Sin meta"}</div>
       </div>
@@ -983,6 +1015,18 @@ function openSheet(html, { fullscreen = false } = {}) {
 }
 function closeSheet() { $("#sheet-root").innerHTML = ""; }
 
+/* Botón "?" y su mini ventana */
+function helpBtn(key) { return `<button class="help" data-help="${key}" aria-label="Cómo funciona">?</button>`; }
+function openHelp(key) {
+  const h = HELP[key]; if (!h) return;
+  openSheet(`
+    <div class="toolbar"><h2 style="margin:0">${esc(h.title)}</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="help-body">${h.html}</div>
+    <div class="gap"></div>
+    <button class="btn" onclick="closeSheet()">Entendido</button>
+  `);
+}
+
 /* ---- Registrar movimiento (ingreso o gasto) ---- */
 function openTx(type, editId) {
   const editing = editId ? DB.transactions.find(t => t.id === editId) : null;
@@ -1201,7 +1245,7 @@ function networthBannerHTML() {
   return `<div class="networth">
     <div class="nw-top">
       <div>
-        <div class="nw-label">Dinero disponible</div>
+        <div class="nw-label">Dinero disponible ${helpBtn("patrimonio")}</div>
         <div class="nw-value">${nw < 0 ? "−" : ""}${fmtHero(Math.abs(nw))}</div>
       </div>
       <button class="linkbtn" id="nw-manage">Cuentas</button>
@@ -1739,6 +1783,12 @@ document.body.insertAdjacentHTML("beforeend", `
 
 $$(".tab").forEach(b => b.onclick = () => { currentTab = b.dataset.tab; render(); });
 window.closeSheet = closeSheet; // usado por onclick inline
+
+/* Botones "?" (delegado, sobrevive a los re-render) */
+document.addEventListener("click", (e) => {
+  const h = e.target.closest("[data-help]");
+  if (h) { e.stopPropagation(); openHelp(h.dataset.help); }
+});
 render();
 showLock();
 maybeShowGate();
