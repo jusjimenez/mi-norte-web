@@ -154,6 +154,17 @@ function dateInputValue(iso) {
   const d = new Date(iso);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+function timeInputValue(iso) {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+function timeStr(iso) {
+  return new Date(iso).toLocaleTimeString(DB.settings.locale || "es-CR", { hour: "numeric", minute: "2-digit" });
+}
+function combineDateTime(dateStr, timeStr) {
+  if (!dateStr) return todayISO();
+  return new Date(`${dateStr}T${timeStr || "12:00"}:00`).toISOString();
+}
 function daysInMonth(mk) { const [y, m] = mk.split("-").map(Number); return new Date(y, m, 0).getDate(); }
 function isCurrentMonth(mk) { return mk === monthKeyOf(new Date()); }
 function todayKeyStr() { return dateInputValue(new Date().toISOString()); }
@@ -502,13 +513,14 @@ function txRow(t, opts = {}) {
   const inc = t.type === "income";
   const col = isTransfer ? "var(--tint)" : catColor(t.category, t.type);
   const dstr = new Date(t.date).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short" });
+  const when = `${dstr}, ${timeStr(t.date)}`;
   let title, sub;
   if (isTransfer) {
     title = "Transferencia";
-    sub = `${dstr} · ${esc(accountName(t.from))} → ${esc(accountName(t.to))}`;
+    sub = `${when} · ${esc(accountName(t.from))} → ${esc(accountName(t.to))}`;
   } else {
     title = t.note || t.category || (inc ? "Ingreso" : "Gasto");
-    const parts = [dstr, esc(t.category || "Otro")];
+    const parts = [when, esc(t.category || "Otro")];
     if (accountsExist() && t.account) parts.push(esc(accountName(t.account)));
     if (t.ref) parts.push(`N.° ${esc(t.ref)}`);
     sub = parts.join(" · ");
@@ -710,6 +722,11 @@ SCREENS.reports = () => {
       <div class="metric"><div class="v">${fmt(t.balance)}</div><div class="k">Balance</div></div>
       <div class="metric"><div class="v">${fmt(t.expense)}</div><div class="k">Gasto total</div></div>
       <div class="metric"><div class="v">${proj != null ? fmt(proj) : t.count}</div><div class="k">${proj != null ? "Proyección fin de mes" : "Movimientos"}</div></div>
+    </div>
+
+    <div class="card">
+      <h2>Análisis del periodo</h2>
+      ${writtenSummary(list, { periodLabel, mode })}
     </div>
 
     <div class="card">
@@ -979,8 +996,10 @@ function openTx(type, editId) {
       <input type="number" id="tx-amt" inputmode="decimal" placeholder="0" value="${editing ? editing.amount : ""}" /></label>
     <label class="field"><span>Descripción (opcional)</span>
       <input type="text" id="tx-note" placeholder="${isIncome ? "Salario, venta…" : "¿En qué?"}" value="${editing ? esc(editing.note) : ""}" /></label>
-    <label class="field"><span>Fecha</span>
-      <input type="date" id="tx-date" value="${dateInputValue(editing ? editing.date : todayISO())}" /></label>
+    <div class="rangebar">
+      <label class="field"><span>Fecha</span><input type="date" id="tx-date" value="${dateInputValue(editing ? editing.date : todayISO())}" /></label>
+      <label class="field"><span>Hora</span><input type="time" id="tx-time" value="${timeInputValue(editing ? editing.date : todayISO())}" /></label>
+    </div>
     <label class="field"><span>N.° de comprobante / referencia (opcional)</span>
       <input type="text" id="tx-ref" placeholder="Ej. factura 00123" value="${editing ? esc(editing.ref) : ""}" /></label>
     <div class="label">Categoría</div>
@@ -1005,8 +1024,7 @@ function openTx(type, editId) {
   $("#tx-save").onclick = () => {
     const amt = parseFloat(($("#tx-amt").value || "").replace(",", ".")) || 0;
     if (amt <= 0) return toast("Escribe un monto");
-    const dv = $("#tx-date").value;
-    const date = dv ? new Date(dv + "T12:00:00").toISOString() : todayISO();
+    const date = combineDateTime($("#tx-date").value, $("#tx-time").value);
     const data = { type: isIncome ? "income" : "expense", amount: amt, category: sel.category, note: $("#tx-note").value.trim(), ref: $("#tx-ref").value.trim(), account: accountsExist() ? sel.account : undefined };
     if (editing) { Object.assign(editing, data, { date }); }
     else { DB.transactions.push({ id: uid(), date, ...data }); }
@@ -1137,7 +1155,10 @@ function openTransfer(editId) {
   openSheet(`
     <h2>${ed ? "Editar transferencia" : "Transferencia"}</h2>
     <label class="field"><span>Monto</span><input type="number" id="tr-amt" inputmode="decimal" placeholder="0" value="${ed ? ed.amount : ""}" /></label>
-    <label class="field"><span>Fecha</span><input type="date" id="tr-date" value="${dateInputValue(ed ? ed.date : todayISO())}" /></label>
+    <div class="rangebar">
+      <label class="field"><span>Fecha</span><input type="date" id="tr-date" value="${dateInputValue(ed ? ed.date : todayISO())}" /></label>
+      <label class="field"><span>Hora</span><input type="time" id="tr-time" value="${timeInputValue(ed ? ed.date : todayISO())}" /></label>
+    </div>
     <div class="label">Desde</div>
     <div class="chips" id="tr-from">${DB.accounts.map(a => `<button data-a="${a.id}" class="${a.id === sel.from ? "on" : ""}">${esc(a.name)}</button>`).join("")}</div>
     <div class="gap"></div><div class="label">Hacia</div>
@@ -1155,8 +1176,7 @@ function openTransfer(editId) {
     const amt = parseFloat(($("#tr-amt").value || "").replace(",", ".")) || 0;
     if (amt <= 0) return toast("Escribe un monto");
     if (sel.from === sel.to) return toast("Elige cuentas distintas");
-    const dv = $("#tr-date").value;
-    const date = dv ? new Date(dv + "T12:00:00").toISOString() : todayISO();
+    const date = combineDateTime($("#tr-date").value, $("#tr-time").value);
     const data = { type: "transfer", amount: amt, from: sel.from, to: sel.to, note: $("#tr-note").value.trim() };
     if (ed) Object.assign(ed, data, { date }); else DB.transactions.push({ id: uid(), date, ...data });
     save(); closeSheet(); render(); toast(ed ? "Transferencia actualizada" : "Transferencia registrada");
@@ -1428,7 +1448,7 @@ function downloadBlob(blob, name) {
 }
 function exportCSV(rows, name) {
   if (!rows.length) return toast("No hay datos para exportar");
-  const head = ["Fecha", "Tipo", "Categoría", "Descripción", "Cuenta", "Comprobante", "Monto"];
+  const head = ["Fecha", "Hora", "Tipo", "Categoría", "Descripción", "Cuenta", "Comprobante", "Monto"];
   const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const lines = [head.join(",")];
   rows.forEach(t => {
@@ -1436,6 +1456,7 @@ function exportCSV(rows, name) {
     const cuenta = t.type === "transfer" ? `${accountName(t.from)} → ${accountName(t.to)}` : accountName(t.account);
     lines.push([
       dateInputValue(t.date),
+      timeInputValue(t.date),
       tipo,
       t.type === "transfer" ? "" : (t.category || "Otro"),
       t.note || "",
@@ -1482,6 +1503,38 @@ function reportBars(series) {
   if (!series) return "";
   const max = Math.max(1, ...series.map(s => Math.max(s.income, s.expense)));
   return `<div class="rp-trend">${series.map(s => `<div class="rp-tcol"><div class="rp-tbars"><span class="rp-in" style="height:${Math.round(s.income / max * 100)}%"></span><span class="rp-out" style="height:${Math.round(s.expense / max * 100)}%"></span></div><div class="rp-tx">${esc(s.label)}</div></div>`).join("")}</div>`;
+}
+function writtenSummary(list, ctx) {
+  if (!list.length) return `<p class="rp-empty">No hay movimientos en este periodo.</p>`;
+  const t = totalsOf(list);
+  const bd = breakdownOf(list, "expense");
+  const goal = DB.settings.savingsGoal || 0;
+  const s = [];
+
+  s.push(`En <b>${esc(ctx.periodLabel)}</b> tus ingresos fueron <b>${fmt(t.income)}</b> y tus gastos <b>${fmt(t.expense)}</b>, con un balance ${t.balance >= 0 ? "positivo" : "negativo"} de <b>${fmt(Math.abs(t.balance))}</b>.`);
+
+  if (t.income > 0) {
+    let sav = `Ahorraste el <b>${Math.round(t.savingsRate)}%</b> de tus ingresos`;
+    sav += goal > 0 ? (t.savingsRate >= goal ? `, por encima de tu meta del ${goal}% 🎉.` : `, por debajo de tu meta del ${goal}%.`) : ".";
+    s.push(sav);
+  }
+  if (bd.length) s.push(`Tu mayor gasto fue en <b>${esc(bd[0].name)}</b>: ${fmt(bd[0].value)} (${Math.round(bd[0].pct)}% del total)${bd[1] ? `, seguido de ${esc(bd[1].name)} (${fmt(bd[1].value)})` : ""}.`);
+
+  let prevList = null, prevLabel = "";
+  if (ctx.mode === "month") { prevList = txOfMonth(shiftMonth(viewMonth, -1)); prevLabel = "el mes anterior"; }
+  else if (ctx.mode === "year") { prevList = txOfYear(reportYear - 1); prevLabel = `${reportYear - 1}`; }
+  if (prevList && prevList.length) {
+    const pt = totalsOf(prevList);
+    if (pt.expense > 0) { const d = t.expense - pt.expense; s.push(`Gastaste <b>${d > 0 ? "más" : "menos"}</b> que ${prevLabel} (${d > 0 ? "+" : "−"}${fmt(Math.abs(d))}, ${Math.round(Math.abs(d) / pt.expense * 100)}%).`); }
+  }
+  const over = ctx.mode === "month" ? budgetStatus(viewMonth).filter(b => b.over) : [];
+  if (over.length) s.push(`⚠ Te pasaste del presupuesto en <b>${over.map(o => esc(o.name)).join(", ")}</b>.`);
+
+  if (t.balance < 0) s.push(`Este periodo gastaste más de lo que ingresó; conviene revisar ${bd[0] ? esc(bd[0].name) : "tus gastos"} para recuperar el balance.`);
+  else if (t.income > 0 && t.savingsRate < goal) s.push(`Vas bien; para alcanzar tu meta de ahorro, intenta recortar un poco en ${bd[0] ? esc(bd[0].name) : "tus gastos variables"}.`);
+  else s.push(`Buen manejo del periodo. Mantén el ritmo. 💪`);
+
+  return `<ul class="rp-summary">${s.map(x => `<li>${x}</li>`).join("")}</ul>`;
 }
 function buildReportHTML(ctx) {
   const loc = DB.settings.locale || "es-CR";
@@ -1535,7 +1588,7 @@ function buildReportHTML(ctx) {
     const acc = m.type === "transfer" ? "" : accountName(m.account);
     const sign = m.type === "income" ? "+" : m.type === "expense" ? "−" : "";
     const color = m.type === "income" ? "#15803d" : m.type === "expense" ? "#b91c1c" : "#0f766e";
-    return `<tr><td>${dateInputValue(m.date)}</td><td>${tipo}</td><td>${esc(cat)}</td><td>${esc(acc)}</td><td>${esc(m.note || "")}${m.ref ? ` <span class="rp-ref">N.° ${esc(m.ref)}</span>` : ""}</td><td class="rp-num" style="color:${color}">${sign}${fmt(m.amount)}</td></tr>`;
+    return `<tr><td>${dateInputValue(m.date)} <span class="rp-ref">${timeInputValue(m.date)}</span></td><td>${tipo}</td><td>${esc(cat)}</td><td>${esc(acc)}</td><td>${esc(m.note || "")}${m.ref ? ` <span class="rp-ref">N.° ${esc(m.ref)}</span>` : ""}</td><td class="rp-num" style="color:${color}">${sign}${fmt(m.amount)}</td></tr>`;
   }).join("");
 
   return `
@@ -1551,6 +1604,11 @@ function buildReportHTML(ctx) {
       <div class="rp-kpis">
         ${kpis.map(k => `<div class="rp-kpi"><div class="rp-k">${esc(k[0])}</div><div class="rp-v" style="color:${k[2]}">${k[1]}</div></div>`).join("")}
       </div>
+    </div>
+
+    <div class="rp-section">
+      <h3>Análisis del periodo</h3>
+      ${writtenSummary(list, ctx)}
     </div>
 
     <div class="rp-section">
@@ -1574,7 +1632,7 @@ function buildReportHTML(ctx) {
 
     <div class="rp-section">
       <h3>Movimientos del periodo (${movs.length})</h3>
-      ${movs.length ? `<table class="rp-table"><thead><tr><th>Fecha</th><th>Tipo</th><th>Categoría</th><th>Cuenta</th><th>Descripción</th><th class="rp-num">Monto</th></tr></thead><tbody>${movRows}</tbody></table>` : `<p class="rp-empty">Sin movimientos en este periodo.</p>`}
+      ${movs.length ? `<table class="rp-table"><thead><tr><th>Fecha / hora</th><th>Tipo</th><th>Categoría</th><th>Cuenta</th><th>Descripción</th><th class="rp-num">Monto</th></tr></thead><tbody>${movRows}</tbody></table>` : `<p class="rp-empty">Sin movimientos en este periodo.</p>`}
     </div>
 
     <div class="rp-foot">MI NORTE · Informe generado automáticamente · Documento confidencial</div>
