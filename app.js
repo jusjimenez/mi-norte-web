@@ -86,7 +86,23 @@ const HELP = {
         <li>Los saldos iniciales no la afectan.</li>
       </ul>`,
   },
+  projection: {
+    title: "Proyección de gasto",
+    html: `Estima <b>cuánto habrás gastado a fin de mes</b> si sigues a este ritmo.
+      <div class="help-eq">Gasto actual ÷ días transcurridos × días del mes</div>
+      <ul>
+        <li>Es una estimación: al inicio del mes es menos precisa.</li>
+        <li>Se afina a medida que registras más gastos.</li>
+      </ul>`,
+  },
 };
+
+/* Explicación del simulador (se despliega dentro de su ventana) */
+const SIM_HELP_HTML = `Compara el costo con tu <b>historial</b>: tu ingreso mensual promedio, tu gasto promedio y el margen que normalmente te sobra.
+  <span class="r">🟢 <b>Cómodo</b>: te queda margen y sigues cumpliendo tu meta de ahorro.</span>
+  <span class="r">🟡 <b>Ajustado</b>: cabe, pero reduce tu ahorro del mes.</span>
+  <span class="r">🔴 <b>Riesgoso</b>: te dejaría sin margen este mes.</span>
+  <span class="r">Mientras más movimientos registres, más precisa es la estimación.</span>`;
 
 /* ---------- Estado / persistencia ---------- */
 let DB = load();
@@ -473,7 +489,7 @@ SCREENS.home = () => {
         <div class="kpi-foot">${goal ? (t.savingsRate >= goal ? `Meta ${goal}% · superada` : `Meta ${goal}%`) : "Sin meta"}</div>
       </div>
       <div class="kpi">
-        <div class="kpi-k">${isCurrentMonth(viewMonth) ? "Proyección de gasto" : "Movimientos"}</div>
+        <div class="kpi-k">${isCurrentMonth(viewMonth) ? `Proyección de gasto ${helpBtn("projection")}` : "Movimientos"}</div>
         <div class="kpi-v">${proj != null ? fmt(proj) : t.count}</div>
         <div class="kpi-foot">${proj != null ? "estimado a fin de mes" : "registrados este mes"}</div>
       </div>
@@ -1457,8 +1473,9 @@ function simulate(amount, sel) {
 function openSimulator() {
   const sel = { recurring: false, category: null };
   openSheet(`
-    <h2>¿Puedo comprarlo?</h2>
+    <h2>¿Puedo comprarlo? <button class="help" id="sim-help-btn" aria-label="Cómo funciona">?</button></h2>
     <p class="hint">Escribe cuánto cuesta y te muestro cómo afecta tu mes y tus metas, usando tu propio historial.</p>
+    <div class="help-inline" id="sim-help" hidden>${SIM_HELP_HTML}</div>
     <label class="field"><span>¿Cuánto cuesta?</span><input type="number" id="sim-amt" inputmode="decimal" placeholder="0" /></label>
     <label class="field"><span>¿Qué es? (opcional)</span><input type="text" id="sim-note" placeholder="Ej. audífonos, suscripción…" /></label>
     <div class="label">Frecuencia</div>
@@ -1472,6 +1489,7 @@ function openSimulator() {
   `, { fullscreen: true });
 
   const paint = () => { $("#sim-result").innerHTML = simulate(parseAmount($("#sim-amt").value), sel); };
+  $("#sim-help-btn").onclick = () => { const h = $("#sim-help"); h.hidden = !h.hidden; };
   $("#sim-amt").oninput = paint;
   $$("#sim-freq button").forEach(b => b.onclick = () => { sel.recurring = b.dataset.f === "month"; $$("#sim-freq button").forEach(x => x.classList.toggle("on", x === b)); paint(); });
   $$("#sim-cats button").forEach(b => b.onclick = () => {
