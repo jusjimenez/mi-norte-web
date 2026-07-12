@@ -840,6 +840,13 @@ SCREENS.reports = () => {
       <div class="gap"></div>
       <button class="btn line" id="r-csv">Exportar movimientos (CSV)</button>
     </div>
+
+    <div class="card">
+      <h2>Conciliación bancaria</h2>
+      <div class="hint">Sube el CSV de tu banco y lo comparo con lo registrado: encuentra diferencias, movimientos faltantes y descuadres de saldo.</div>
+      <div class="gap"></div>
+      <button class="btn ghost" id="r-reconcile">🏦 Conciliar con el banco</button>
+    </div>
   `;
 };
 WIRE.reports = (root) => {
@@ -857,6 +864,7 @@ WIRE.reports = (root) => {
     tt.onchange = () => { reportTo = tt.value; render(); };
   }
   const rb = $("#r-budgets", root); if (rb) rb.onclick = openBudgets;
+  $("#r-reconcile", root).onclick = openReconcile;
   $("#r-pdf", root).onclick = openReportPreview;
   $("#r-csv", root).onclick = () => {
     let listX, nameX;
@@ -1767,6 +1775,227 @@ function openReportPreview() {
   document.body.appendChild(el);
   $("#rp-close", el).onclick = () => el.remove();
   $("#rp-print", el).onclick = () => window.print();
+}
+
+/* ===========================================================
+   CONCILIACIÓN BANCARIA (CSV)
+   =========================================================== */
+function parseCSV(text) {
+  text = String(text).replace(/^﻿/, "");
+  const firstLine = text.split(/\r?\n/)[0] || "";
+  const delim = (firstLine.split(";").length > firstLine.split(",").length) ? ";" : ",";
+  const rows = []; let row = [], cell = "", inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else inQ = false; }
+      else cell += c;
+    } else if (c === '"') inQ = true;
+    else if (c === delim) { row.push(cell); cell = ""; }
+    else if (c === '\n') { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else if (c !== '\r') cell += c;
+  }
+  if (cell.length || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(x => String(x).trim() !== ""));
+}
+function parseMoneyLoose(s) {
+  if (s == null) return NaN;
+  s = String(s).trim(); if (!s) return NaN;
+  let neg = /^\(.*\)$/.test(s) || /-\s*$/.test(s) || /^\s*-/.test(s);
+  s = s.replace(/[^0-9.,]/g, "");
+  const hasDot = s.includes("."), hasComma = s.includes(",");
+  if (hasDot && hasComma) {
+    if (s.lastIndexOf(",") > s.lastIndexOf(".")) s = s.replace(/\./g, "").replace(",", ".");
+    else s = s.replace(/,/g, "");
+  } else if (hasComma) {
+    s = /,\d{1,2}$/.test(s) ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  }
+  let n = parseFloat(s); if (isNaN(n)) return NaN;
+  return neg ? -Math.abs(n) : n;
+}
+function parseDateLoose(s, fmt) {
+  s = String(s).trim(); let m;
+  if ((m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/))) return new Date(+m[1], +m[2] - 1, +m[3], 12).toISOString();
+  if ((m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/))) {
+    let a = +m[1], b = +m[2], y = +m[3]; if (y < 100) y += 2000;
+    let dd, mm;
+    if (fmt === "mdy") { mm = a; dd = b; }
+    else if (fmt === "dmy") { dd = a; mm = b; }
+    else { if (a > 12) { dd = a; mm = b; } else if (b > 12) { mm = a; dd = b; } else { dd = a; mm = b; } }
+    return new Date(y, mm - 1, dd, 12).toISOString();
+  }
+  const d = new Date(s); return isNaN(d) ? null : d.toISOString();
+}
+function appSigned(t, acc) {
+  if (t.type === "income") return t.amount;
+  if (t.type === "expense") return -t.amount;
+  if (t.type === "transfer") { if (t.to === acc) return t.amount; if (t.from === acc) return -t.amount; }
+  return 0;
+}
+
+let reconState = null;
+function openReconcile() {
+  reconState = { rows: null, headers: null, result: null,
+    map: { date: 0, desc: 1, amount: 2, mode: "single", debit: 2, credit: 3, dfmt: "auto" },
+    account: DB.accounts[0] ? DB.accounts[0].id : null };
+  drawReconUpload();
+}
+function autodetectMap(headers) {
+  const h = headers.map(x => String(x || "").toLowerCase());
+  const find = (kw) => h.findIndex(x => kw.some(k => x.includes(k)));
+  const d = find(["fecha", "date", "día", "dia"]);
+  const de = find(["descrip", "concepto", "detalle", "referencia", "transacc", "glosa", "movimiento"]);
+  const deb = find(["débito", "debito", "cargo", "salida", "retiro", "debe"]);
+  const cred = find(["crédito", "credito", "abono", "depósito", "deposito", "entrada", "haber"]);
+  const amt = find(["monto", "importe", "amount", "valor"]);
+  reconState.map.date = d >= 0 ? d : 0;
+  reconState.map.desc = de >= 0 ? de : 1;
+  if (deb >= 0 && cred >= 0 && deb !== cred) { reconState.map.mode = "split"; reconState.map.debit = deb; reconState.map.credit = cred; }
+  else { reconState.map.mode = "single"; reconState.map.amount = amt >= 0 ? amt : 2; }
+}
+function drawReconUpload() {
+  const rows = reconState.rows;
+  const headers = reconState.headers || [];
+  const opts = (sel) => headers.map((h, i) => `<option value="${i}" ${sel === i ? "selected" : ""}>${esc(h || ("Columna " + (i + 1)))}</option>`).join("");
+  openSheet(`
+    <div class="toolbar"><h2 style="margin:0">Conciliación bancaria</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <p class="hint">Sube el CSV de tu banco. Comparo sus movimientos con los que registraste y te muestro las diferencias.</p>
+    <button class="btn ghost" id="rc-file-btn">${rows ? "Elegir otro CSV" : "Elegir archivo CSV"}</button>
+    <input type="file" id="rc-file" accept=".csv,text/csv,text/plain" hidden />
+    ${rows ? `
+      <div class="gap"></div>
+      <div class="hint">${rows.length} filas leídas. Confirma qué columna es cada cosa:</div>
+      <div class="gap"></div>
+      ${accountsExist() ? `<div class="label">Cuenta a conciliar</div><div class="chips" id="rc-acc">${DB.accounts.map(a => `<button data-a="${a.id}" class="${a.id === reconState.account ? "on" : ""}">${esc(a.name)}</button>`).join("")}</div><div class="gap"></div>` : ""}
+      <label class="field"><span>Columna de fecha</span><select id="rc-date">${opts(reconState.map.date)}</select></label>
+      <label class="field"><span>Columna de descripción</span><select id="rc-desc">${opts(reconState.map.desc)}</select></label>
+      <div class="label">Monto</div>
+      <div class="seg" id="rc-mode"><button data-m="single" class="${reconState.map.mode === "single" ? "on" : ""}">Una columna</button><button data-m="split" class="${reconState.map.mode === "split" ? "on" : ""}">Débito / Crédito</button></div>
+      <div class="gap"></div>
+      <div id="rc-amt-fields"></div>
+      <label class="field"><span>Formato de fecha</span><select id="rc-dfmt">
+        <option value="auto" ${reconState.map.dfmt === "auto" ? "selected" : ""}>Automático</option>
+        <option value="dmy" ${reconState.map.dfmt === "dmy" ? "selected" : ""}>DD/MM/AAAA</option>
+        <option value="mdy" ${reconState.map.dfmt === "mdy" ? "selected" : ""}>MM/DD/AAAA</option>
+      </select></label>
+      <div class="gap"></div>
+      <button class="btn" id="rc-run">Conciliar</button>
+    ` : `<div class="gap"></div><div class="hint">Consejo: la mayoría de bancos permite descargar los movimientos como CSV o Excel (guárdalo como CSV).</div>`}
+    <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cerrar</button>
+  `, { fullscreen: true });
+
+  $("#rc-file-btn").onclick = () => $("#rc-file").click();
+  $("#rc-file").onchange = (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const parsed = parseCSV(reader.result);
+      if (parsed.length < 2) return toast("El CSV parece vacío o sin filas");
+      reconState.headers = parsed[0];
+      reconState.rows = parsed.slice(1);
+      autodetectMap(parsed[0]);
+      drawReconUpload();
+    };
+    reader.readAsText(f);
+  };
+  if (rows) {
+    if (accountsExist()) $$("#rc-acc button").forEach(b => b.onclick = () => { reconState.account = b.dataset.a; $$("#rc-acc button").forEach(x => x.classList.toggle("on", x === b)); });
+    $("#rc-date").onchange = e => reconState.map.date = +e.target.value;
+    $("#rc-desc").onchange = e => reconState.map.desc = +e.target.value;
+    $("#rc-dfmt").onchange = e => reconState.map.dfmt = e.target.value;
+    const paintAmt = () => {
+      const mode = reconState.map.mode;
+      $("#rc-amt-fields").innerHTML = mode === "single"
+        ? `<label class="field"><span>Columna de monto (con signo: + entra, − sale)</span><select id="rc-amount">${opts(reconState.map.amount)}</select></label>`
+        : `<label class="field"><span>Débito (salidas)</span><select id="rc-debit">${opts(reconState.map.debit)}</select></label><label class="field"><span>Crédito (entradas)</span><select id="rc-credit">${opts(reconState.map.credit)}</select></label>`;
+      if (mode === "single") $("#rc-amount").onchange = e => reconState.map.amount = +e.target.value;
+      else { $("#rc-debit").onchange = e => reconState.map.debit = +e.target.value; $("#rc-credit").onchange = e => reconState.map.credit = +e.target.value; }
+    };
+    paintAmt();
+    $$("#rc-mode button").forEach(b => b.onclick = () => { reconState.map.mode = b.dataset.m; $$("#rc-mode button").forEach(x => x.classList.toggle("on", x === b)); paintAmt(); });
+    $("#rc-run").onclick = runReconcile;
+  }
+}
+function runReconcile() {
+  const m = reconState.map, rows = reconState.rows || [], bank = [];
+  rows.forEach(r => {
+    const dISO = parseDateLoose(r[m.date], m.dfmt);
+    let amount;
+    if (m.mode === "single") amount = parseMoneyLoose(r[m.amount]);
+    else {
+      const deb = parseMoneyLoose(r[m.debit]), cred = parseMoneyLoose(r[m.credit]);
+      amount = (isNaN(cred) ? 0 : Math.abs(cred)) - (isNaN(deb) ? 0 : Math.abs(deb));
+    }
+    if (!dISO || isNaN(amount) || amount === 0) return;
+    bank.push({ date: dISO, note: String(r[m.desc] || "").trim(), amount });
+  });
+  if (!bank.length) return toast("No pude interpretar montos/fechas. Revisa las columnas.");
+  const dts = bank.map(b => dateInputValue(b.date)).sort();
+  const from = dts[0], to = dts[dts.length - 1];
+  const acc = reconState.account;
+  const app = DB.transactions.filter(t => {
+    const d = dateInputValue(t.date);
+    if (d < from || d > to) return false;
+    if (acc) { if (t.type === "transfer") return t.from === acc || t.to === acc; return t.account === acc; }
+    return t.type !== "transfer";
+  }).map(t => ({ id: t.id, date: t.date, note: t.note || t.category || "", amount: appSigned(t, acc) }));
+
+  const used = new Set(), matched = [], bankOnly = [];
+  bank.forEach(bi => {
+    let best = -1, bestDiff = Infinity;
+    app.forEach((ai, idx) => {
+      if (used.has(idx) || Math.abs(ai.amount - bi.amount) > 0.5) return;
+      const dd = Math.abs(new Date(ai.date) - new Date(bi.date)) / 86400000;
+      if (dd <= 5 && dd < bestDiff) { bestDiff = dd; best = idx; }
+    });
+    if (best >= 0) { used.add(best); matched.push({ bank: bi, app: app[best] }); }
+    else bankOnly.push(bi);
+  });
+  const appOnly = app.filter((_, idx) => !used.has(idx));
+  reconState.result = { matched, bankOnly, appOnly,
+    bankSum: bank.reduce((s, b) => s + b.amount, 0), appSum: app.reduce((s, a) => s + a.amount, 0), from, to };
+  drawReconResults();
+}
+function addBankItem(bi) {
+  DB.transactions.push({ id: uid(), date: bi.date, type: bi.amount > 0 ? "income" : "expense",
+    amount: Math.abs(bi.amount), category: "Otro", note: bi.note, account: reconState.account || undefined });
+}
+function drawReconResults() {
+  const R = reconState.result;
+  const diff = R.bankSum - R.appSum;
+  const signed = (n) => `${n > 0 ? "+" : "−"}${fmt(Math.abs(n))}`;
+  const dl = (iso) => new Date(iso).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short", year: "numeric" });
+  const bankRow = (bi, extra) => `<div class="list-item"><span class="mov-ic" style="color:${bi.amount > 0 ? "var(--green)" : "var(--red)"}">${bi.amount > 0 ? "↑" : "↓"}</span><div class="grow"><div class="t">${esc(bi.note || "(sin descripción)")}</div><div class="s">${dl(bi.date)}</div></div><div class="amt ${bi.amount > 0 ? "in" : "out"}">${signed(bi.amount)}</div>${extra}</div>`;
+  openSheet(`
+    <div class="toolbar"><h2 style="margin:0">Conciliación</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="metrics">
+      <div class="metric"><div class="v" style="color:var(--green)">${R.matched.length}</div><div class="k">Coinciden</div></div>
+      <div class="metric"><div class="v" style="color:var(--amber)">${R.bankOnly.length}</div><div class="k">Faltan en la app</div></div>
+      <div class="metric"><div class="v" style="color:var(--red)">${R.appOnly.length}</div><div class="k">Solo en la app</div></div>
+      <div class="metric"><div class="v">${fmt(Math.abs(diff))}</div><div class="k">Diferencia de saldo</div></div>
+    </div>
+    ${(!R.bankOnly.length && !R.appOnly.length) ? `<div class="card center"><div style="font-size:22px">✅</div><strong>Todo cuadra</strong><div class="hint">Tus registros coinciden con el banco en este periodo.</div></div>` : ""}
+    ${R.bankOnly.length ? `<div class="card">
+      <div class="row"><h2 style="margin:0">En el banco, no en la app</h2><button class="linkbtn" id="rc-add-all">Agregar todos</button></div>
+      <div class="hint">Movimientos del banco que no encontré registrados. Agrégalos para emparejar.</div>
+      <div class="gap"></div>
+      ${R.bankOnly.map((bi, i) => bankRow(bi, `<button class="btn small line" data-rc-add="${i}">Agregar</button>`)).join("")}
+    </div>` : ""}
+    ${R.appOnly.length ? `<div class="card">
+      <h2>Solo en la app</h2>
+      <div class="hint">Registrados en la app pero que no aparecen en el banco. Revisa si son un error o si al banco le falta.</div>
+      <div class="gap"></div>
+      ${R.appOnly.map(ai => bankRow(ai, `<button class="btn small line" data-rc-edit="${ai.id}">Ver</button>`)).join("")}
+    </div>` : ""}
+    ${R.matched.length ? `<div class="card"><h2>Coinciden (${R.matched.length})</h2><div class="hint">Emparejados correctamente por monto y fecha ✓</div></div>` : ""}
+    <button class="btn line" id="rc-back">Subir otro CSV</button>
+    <div class="gap"></div><button class="btn" onclick="closeSheet()">Cerrar</button>
+  `, { fullscreen: true });
+
+  $$("[data-rc-add]").forEach(b => b.onclick = () => { addBankItem(reconState.result.bankOnly[+b.dataset.rcAdd]); save(); runReconcile(); });
+  const all = $("#rc-add-all"); if (all) all.onclick = () => { reconState.result.bankOnly.forEach(addBankItem); save(); toast("Movimientos agregados"); runReconcile(); };
+  $$("[data-rc-edit]").forEach(b => b.onclick = () => editTx(b.dataset.rcEdit));
+  $("#rc-back").onclick = () => { reconState.result = null; reconState.rows = null; reconState.headers = null; drawReconUpload(); };
 }
 
 /* ===========================================================
