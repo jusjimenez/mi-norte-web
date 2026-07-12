@@ -359,6 +359,36 @@ function debtMonthlyInterest(d) {
   const monthly = d.ratePeriod === "mensual" ? d.rate : d.rate / 12;
   return bal * monthly / 100;
 }
+/* Proyección de pago: cuántos meses y cuánto se pagará en total, con la cuota
+   mensual establecida y el interés. Parte del SALDO actual, así que se recalcula
+   sola conforme se abonan pagos al capital. */
+function debtProjection(d) {
+  const bal = debtBalance(d);
+  const pay = d.monthly || 0;
+  const r = (d.rate ? (d.ratePeriod === "mensual" ? d.rate : d.rate / 12) : 0) / 100;
+  if (bal <= 0) return { done: true, balance: 0, months: 0, totalPay: 0, totalInterest: 0 };
+  if (pay <= 0) return { noPay: true, balance: bal };
+  // La cuota no cubre ni el interés del mes: nunca se termina de pagar.
+  if (r > 0 && pay <= bal * r + 0.0001) return { never: true, balance: bal, monthlyInterest: bal * r };
+  let b = bal, months = 0, totalPay = 0;
+  // Amortización mes a mes (tope de seguridad de 1200 meses = 100 años).
+  while (b > 0.005 && months < 1200) {
+    const interest = b * r;
+    const principalPart = pay - interest;
+    const thisPay = (b + interest <= pay) ? (b + interest) : pay; // último pago ajustado
+    b = b + interest - thisPay;
+    totalPay += thisPay;
+    months++;
+  }
+  return { months, totalPay, totalInterest: totalPay - bal, balance: bal, monthly: pay };
+}
+function fmtMonths(n) {
+  if (n <= 0) return "0 meses";
+  const y = Math.floor(n / 12), m = n % 12, parts = [];
+  if (y) parts.push(y + (y === 1 ? " año" : " años"));
+  if (m) parts.push(m + (m === 1 ? " mes" : " meses"));
+  return parts.join(" y ") || n + " meses";
+}
 function totalOwe() { return DB.debts.filter(d => d.dir === "owe").reduce((s, d) => s + debtBalance(d), 0); }
 function totalOwed() { return DB.debts.filter(d => d.dir === "owed").reduce((s, d) => s + debtBalance(d), 0); }
 function upcomingDebts() { return DB.debts.filter(d => { const st = debtStatus(d); return st === "vencida" || st === "porvencer"; }); }
@@ -1487,6 +1517,9 @@ function openDebts() {
         <div class="bud-top"><span>Saldo ${fmt(bal)}</span><span>${fmt(paid)} / ${fmt(d.principal)}</span></div>
         <div class="kpi-bar"><i style="width:${pct}%"></i></div>
         <div class="hint" style="margin-top:6px">${d.dueDate ? "Vence " + new Date(d.dueDate).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short", year: "numeric" }) : "Sin fecha"}${d.rate ? ` · Interés ~${fmt(mi)}/mes (${d.rate}% ${d.ratePeriod})` : ""}</div>
+        ${(() => { if (bal <= 0 || !d.monthly) return ""; const p = debtProjection(d);
+          if (p.never) return `<div class="proj"><div class="proj-warn">⚠️ La cuota (${fmt(d.monthly)}) no cubre el interés del mes (${fmt(p.monthlyInterest)}); el saldo no bajaría.</div></div>`;
+          return `<div class="proj"><div class="proj-row"><span>Cuota ${fmt(d.monthly)}/mes · faltan</span><b>${fmtMonths(p.months)}</b></div><div class="proj-row"><span>Aún por pagar</span><b>${fmt(p.totalPay)}</b></div>${p.totalInterest > 0.5 ? `<div class="proj-row"><span>Intereses restantes</span><b>${fmt(p.totalInterest)}</b></div>` : ""}</div>`; })()}
         ${(d.payments && d.payments.length) ? `<div class="gap"></div><button class="linkbtn" data-d-hist="${d.id}">Ver historial de pagos (${d.payments.length})</button>` : ""}
         <div class="btn-row" style="margin:12px 0 0">
           ${bal > 0 ? `<button class="btn small" data-d-pay="${d.id}">${d.dir === "owe" ? "+ Pago" : "+ Abono"}</button>` : ""}
@@ -1548,17 +1581,37 @@ function openDebtForm(editId) {
     <label class="field"><span>Interés % (opcional)</span><input type="number" id="d-rate" inputmode="decimal" placeholder="0" value="${ed && ed.rate ? ed.rate : ""}" /></label>
     <div class="seg" id="d-rperiod"><button data-v="anual" class="${ratePeriod === "anual" ? "on" : ""}">Anual</button><button data-v="mensual" class="${ratePeriod === "mensual" ? "on" : ""}">Mensual</button></div>
     <div class="gap"></div>
+    <label class="field"><span>Cuota / pago mensual (opcional)</span><input type="number" id="d-monthly" inputmode="decimal" placeholder="0" value="${ed && ed.monthly ? ed.monthly : ""}" /></label>
+    <div id="d-proj" class="proj"></div>
+    <div class="gap"></div>
     <label class="field"><span>Fecha de pago (opcional)</span><input type="date" id="d-due" value="${ed && ed.dueDate ? dateInputValue(ed.dueDate) : ""}" /></label>
     <button class="btn" id="d-save">${ed ? "Guardar cambios" : "Crear"}</button>
     <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cancelar</button>
   `, { fullscreen: true });
   $$("#d-dir button").forEach(b => b.onclick = () => { dir = b.dataset.v; $$("#d-dir button").forEach(x => x.classList.toggle("on", x === b)); });
-  $$("#d-rperiod button").forEach(b => b.onclick = () => { ratePeriod = b.dataset.v; $$("#d-rperiod button").forEach(x => x.classList.toggle("on", x === b)); });
+  $$("#d-rperiod button").forEach(b => b.onclick = () => { ratePeriod = b.dataset.v; $$("#d-rperiod button").forEach(x => x.classList.toggle("on", x === b)); drawProj(); });
+  const paidSoFar = ed ? debtPaid(ed) : 0;
+  const drawProj = () => {
+    const principal = parseAmount($("#d-principal").value);
+    const monthly = parseAmount($("#d-monthly").value);
+    const box = $("#d-proj"); if (!box) return;
+    if (principal <= 0 || monthly <= 0) { box.innerHTML = ""; return; }
+    // Proyecta sobre el saldo pendiente (capital menos lo ya abonado).
+    const sim = { principal, payments: [{ amount: Math.min(paidSoFar, principal) }], rate: parseAmount($("#d-rate").value), ratePeriod, monthly };
+    const p = debtProjection(sim);
+    if (p.never) { box.innerHTML = `<div class="proj-warn">⚠️ La cuota (${fmt(monthly)}) no cubre el interés del mes (${fmt(p.monthlyInterest)}). Súbela para poder terminar de pagar.</div>`; return; }
+    if (p.noPay || p.done) { box.innerHTML = ""; return; }
+    box.innerHTML = `<div class="proj-row"><span>Tiempo estimado</span><b>${fmtMonths(p.months)}</b></div>
+      <div class="proj-row"><span>Total a pagar</span><b>${fmt(p.totalPay)}</b></div>
+      <div class="proj-row"><span>Intereses</span><b>${fmt(p.totalInterest)}</b></div>`;
+  };
+  ["#d-principal", "#d-rate", "#d-monthly"].forEach(s => { const el = $(s); if (el) el.oninput = drawProj; });
+  drawProj();
   $("#d-save").onclick = () => {
     const name = $("#d-name").value.trim(); if (!name) return toast("Ponle un nombre");
     const principal = parseAmount($("#d-principal").value); if (principal <= 0) return toast("Escribe el monto");
     const dv = $("#d-due").value;
-    const data = { name, party: $("#d-party").value.trim(), dir, principal, rate: parseAmount($("#d-rate").value), ratePeriod, dueDate: dv ? new Date(dv + "T12:00:00").toISOString() : "" };
+    const data = { name, party: $("#d-party").value.trim(), dir, principal, rate: parseAmount($("#d-rate").value), ratePeriod, monthly: parseAmount($("#d-monthly").value), dueDate: dv ? new Date(dv + "T12:00:00").toISOString() : "" };
     if (ed) Object.assign(ed, data);
     else DB.debts.push({ id: uid(), ...data, note: "", createdAt: todayISO(), payments: [] });
     save(); openDebts();

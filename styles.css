@@ -97,6 +97,17 @@ input, textarea, select { -webkit-user-select: text; user-select: text; }
 .hub-s { font-size: 12.5px; color: var(--label-2); margin-top: 2px; }
 .hub-chev { flex: none; color: var(--label-2); font-size: 22px; line-height: 1; font-weight: 400; }
 
+/* Proyección de pago de deudas */
+.proj { margin-top: 10px; background: var(--card-2); border: 1px solid var(--card-border);
+  border-radius: 12px; padding: 4px 12px; }
+.proj:empty { display: none; }
+.proj-row { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 8px 0; border-bottom: 1px solid var(--sep); font-size: 13.5px; }
+.proj-row:last-child { border-bottom: none; }
+.proj-row span { color: var(--label-2); }
+.proj-row b { color: var(--label); font-weight: 700; }
+.proj-warn { padding: 10px 0; font-size: 13px; color: #fca5a5; line-height: 1.35; }
+
 /* Bienvenida (primer uso) */
 .welcome-mark { display: flex; justify-content: center; margin-bottom: 8px; }
 .welcome-mark .brandmark { filter: drop-shadow(0 4px 14px rgba(45,212,191,.35)); }
