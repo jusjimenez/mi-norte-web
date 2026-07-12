@@ -79,6 +79,22 @@ input, textarea, select { -webkit-user-select: text; user-select: text; }
 /* Etiqueta micro (eyebrow) */
 .lbl { font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--label-2); font-weight: 700; }
 
+/* Encabezado de sección (segmentación) */
+.section-title { font-size: 12px; font-weight: 800; letter-spacing: 0.13em; text-transform: uppercase;
+  color: var(--label-2); margin: 22px 4px 12px; }
+.screen > .section-title:first-of-type { margin-top: 8px; }
+
+/* Bienvenida (primer uso) */
+.welcome-mark { display: flex; justify-content: center; margin-bottom: 8px; }
+.welcome-mark .brandmark { filter: drop-shadow(0 4px 14px rgba(45,212,191,.35)); }
+.welcome h2 { text-align: center; margin-bottom: 16px; }
+.welcome-step { display: flex; gap: 13px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--sep); }
+.welcome-step:last-of-type { border-bottom: none; }
+.welcome-step .wn { width: 26px; height: 26px; border-radius: 50%; background: var(--tint-soft); color: var(--tint);
+  font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; flex: none; margin-top: 1px; }
+.welcome-step strong { font-size: 15px; }
+.center.hint { text-align: center; margin-top: 4px; }
+
 /* ----- Navegador de mes ----- */
 .monthnav {
   display: flex; align-items: center; justify-content: space-between;

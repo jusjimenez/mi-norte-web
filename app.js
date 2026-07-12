@@ -460,9 +460,12 @@ SCREENS.home = () => {
     return `<span class="delta ${cls}">${sign} ${fmt(Math.abs(d))}</span>`;
   };
 
+  if (!DB.transactions.length && !DB.accounts.length && !DB.goals.length) return homeWelcome();
   return `
     <div class="head"><h1>Resumen</h1><p>Tus finanzas de un vistazo.</p></div>
     ${accountsExist() ? networthBannerHTML() : ""}
+
+    <div class="section-title">Este mes</div>
     ${monthNav()}
 
     ${showReminder() ? `
@@ -508,14 +511,7 @@ SCREENS.home = () => {
     </div>
     <button class="btn line sim-cta" id="h-sim">🧮 ¿Puedo permitirme una compra?</button>
 
-    <div class="card">
-      <div class="row"><h2 style="margin:0">Comparado con ${esc(shortMonthLabel(shiftMonth(viewMonth, -1)))}</h2></div>
-      <div class="gap"></div>
-      <div class="cmp"><span>Ingresos</span><span>${fmt(t.income)} ${delta(t.income, prev.income)}</span></div>
-      <div class="cmp"><span>Gastos</span><span>${fmt(t.expense)} ${delta(t.expense, prev.expense)}</span></div>
-      <div class="cmp"><span>Balance</span><span>${fmt(t.balance)} ${delta(t.balance, prev.balance)}</span></div>
-    </div>
-
+    ${(budgets.length || DB.goals.length) ? `<div class="section-title">Seguimiento</div>` : ""}
     ${budgets.length ? `
     <div class="card">
       <h2>Alertas de presupuesto</h2>
@@ -529,6 +525,7 @@ SCREENS.home = () => {
 
     ${DB.goals.length ? goalsCardHTML() : ""}
 
+    <div class="section-title">Actividad</div>
     <div class="card">
       <div class="row"><h2 style="margin:0">Últimos movimientos</h2><button class="linkbtn" id="h-all">Ver todos</button></div>
       <div class="gap"></div>
@@ -536,7 +533,25 @@ SCREENS.home = () => {
     </div>
   `;
 };
+function homeWelcome() {
+  return `
+    <div class="head"><h1>Bienvenido</h1><p>Tus finanzas, con claridad.</p></div>
+    <div class="card welcome">
+      <div class="welcome-mark">${brandMark(58)}</div>
+      <h2>Empieza en 2 pasos</h2>
+      <div class="welcome-step"><span class="wn">1</span><div><strong>Agrega una cuenta</strong><div class="hint">Efectivo, banco o tarjeta, con su saldo actual. Así sabrás cuánto tienes.</div></div></div>
+      <div class="welcome-step"><span class="wn">2</span><div><strong>Registra un movimiento</strong><div class="hint">Un ingreso o un gasto. Con eso empieza tu resumen del mes.</div></div></div>
+      <div class="gap"></div>
+      <button class="btn" id="w-account">Agregar mi primera cuenta</button>
+      <div class="gap"></div>
+      <button class="btn ghost" id="w-expense">Registrar un movimiento</button>
+    </div>
+    <div class="hint center">También puedes explorar las pestañas de abajo: Movimientos, Reportes y Ajustes.</div>
+  `;
+}
 WIRE.home = (root) => {
+  const wa = $("#w-account", root);
+  if (wa) { wa.onclick = openAccounts; $("#w-expense", root).onclick = () => openTx("expense"); return; }
   wireMonthNav(root);
   const rem = $("#reminder", root);
   if (rem) {
@@ -858,6 +873,47 @@ SCREENS.settings = () => {
   return `
     <div class="head"><h1>Ajustes</h1><p>Personaliza y respalda.</p></div>
 
+    <div class="section-title">Cuenta y dinero</div>
+
+    <div class="card">
+      <div class="row"><h2 style="margin:0">Cuentas</h2><button class="linkbtn" id="s-accounts">Gestionar</button></div>
+      <div class="hint">Efectivo, banco o tarjeta, con saldo por cuenta y transferencias entre ellas.</div>
+      ${accountsExist() ? `<div class="gap"></div>${DB.accounts.map(a => `<div class="list-item"><span class="mov-ic acc-ic">${ACCOUNT_ICON[a.kind] || "◆"}</span><div class="grow"><div class="t">${esc(a.name)}</div><div class="s">${esc(a.kind)}</div></div><div class="amt ${accountBalance(a.id) < 0 ? "out" : ""}">${fmt(accountBalance(a.id))}</div></div>`).join("")}` : ""}
+    </div>
+
+    <div class="card">
+      <div class="row"><h2 style="margin:0">Categorías</h2></div>
+      <div class="hint">Personaliza tus categorías de gastos e ingresos.</div>
+      <div class="gap"></div>
+      <button class="btn line" id="s-cat-expense">Categorías de gasto (${DB.categories.expense.length})</button>
+      <div class="gap"></div>
+      <button class="btn line" id="s-cat-income">Categorías de ingreso (${DB.categories.income.length})</button>
+    </div>
+
+    <div class="card">
+      <div class="row"><h2 style="margin:0">Presupuestos</h2><button class="linkbtn" id="s-budgets">Editar</button></div>
+      <div class="hint">Define un límite mensual por categoría para recibir alertas.</div>
+    </div>
+
+    <div class="card">
+      <div class="row"><h2 style="margin:0">Movimientos fijos</h2><button class="linkbtn" id="s-recurring">Gestionar</button></div>
+      <div class="hint">Ingresos o gastos que se repiten cada mes (salario, alquiler, etc.). Regístralos con un toque.</div>
+      ${DB.recurring.length ? `<div class="gap"></div>${DB.recurring.map(r => `
+        <div class="list-item">
+          <span class="cdot" style="background:${catColor(r.category, r.type)}"></span>
+          <div class="grow"><div class="t">${esc(r.note || r.category)}</div><div class="s">Día ${r.day} · ${esc(r.category)}${r.account ? " · " + esc(accountName(r.account)) : ""}</div></div>
+          <div class="amt ${r.type === "income" ? "in" : "out"}">${r.type === "income" ? "+" : "−"}${fmt(r.amount)}</div>
+          <button class="btn small line" data-add-rec="${r.id}">Registrar</button>
+        </div>`).join("")}` : ""}
+    </div>
+
+    <div class="card">
+      <div class="row"><h2 style="margin:0">Metas y deudas</h2><button class="linkbtn" id="s-goals">Gestionar</button></div>
+      <div class="hint">Objetivos de ahorro y seguimiento de deudas con progreso.</div>
+    </div>
+
+    <div class="section-title">Preferencias</div>
+
     <div class="card">
       <h2>Moneda</h2>
       <label class="field"><span>Moneda para mostrar tus montos</span>
@@ -897,42 +953,7 @@ SCREENS.settings = () => {
       <div class="hint">Una pantalla completa con una frase, en la mañana y en la noche, para invitarte a registrar tus movimientos.</div>
     </div>
 
-    <div class="card">
-      <div class="row"><h2 style="margin:0">Categorías</h2></div>
-      <div class="hint">Personaliza tus categorías de gastos e ingresos.</div>
-      <div class="gap"></div>
-      <button class="btn line" id="s-cat-expense">Categorías de gasto (${DB.categories.expense.length})</button>
-      <div class="gap"></div>
-      <button class="btn line" id="s-cat-income">Categorías de ingreso (${DB.categories.income.length})</button>
-    </div>
-
-    <div class="card">
-      <div class="row"><h2 style="margin:0">Presupuestos</h2><button class="linkbtn" id="s-budgets">Editar</button></div>
-      <div class="hint">Define un límite mensual por categoría para recibir alertas.</div>
-    </div>
-
-    <div class="card">
-      <div class="row"><h2 style="margin:0">Movimientos fijos</h2><button class="linkbtn" id="s-recurring">Gestionar</button></div>
-      <div class="hint">Ingresos o gastos que se repiten cada mes (salario, alquiler, etc.). Regístralos con un toque.</div>
-      ${DB.recurring.length ? `<div class="gap"></div>${DB.recurring.map(r => `
-        <div class="list-item">
-          <span class="cdot" style="background:${catColor(r.category, r.type)}"></span>
-          <div class="grow"><div class="t">${esc(r.note || r.category)}</div><div class="s">Día ${r.day} · ${esc(r.category)}${r.account ? " · " + esc(accountName(r.account)) : ""}</div></div>
-          <div class="amt ${r.type === "income" ? "in" : "out"}">${r.type === "income" ? "+" : "−"}${fmt(r.amount)}</div>
-          <button class="btn small line" data-add-rec="${r.id}">Registrar</button>
-        </div>`).join("")}` : ""}
-    </div>
-
-    <div class="card">
-      <div class="row"><h2 style="margin:0">Cuentas</h2><button class="linkbtn" id="s-accounts">Gestionar</button></div>
-      <div class="hint">Efectivo, banco o tarjeta, con saldo por cuenta y transferencias entre ellas.</div>
-      ${accountsExist() ? `<div class="gap"></div>${DB.accounts.map(a => `<div class="list-item"><span class="mov-ic acc-ic">${ACCOUNT_ICON[a.kind] || "◆"}</span><div class="grow"><div class="t">${esc(a.name)}</div><div class="s">${esc(a.kind)}</div></div><div class="amt ${accountBalance(a.id) < 0 ? "out" : ""}">${fmt(accountBalance(a.id))}</div></div>`).join("")}` : ""}
-    </div>
-
-    <div class="card">
-      <div class="row"><h2 style="margin:0">Metas y deudas</h2><button class="linkbtn" id="s-goals">Gestionar</button></div>
-      <div class="hint">Objetivos de ahorro y seguimiento de deudas con progreso.</div>
-    </div>
+    <div class="section-title">Seguridad</div>
 
     <div class="card">
       <div class="row"><h2 style="margin:0">Bloqueo con PIN</h2>
@@ -940,6 +961,8 @@ SCREENS.settings = () => {
       </div>
       <div class="hint">Pide un PIN de 4 dígitos al abrir la app para proteger tus datos.</div>
     </div>
+
+    <div class="section-title">Datos y respaldo</div>
 
     <div class="card">
       <h2>Tus datos</h2>
@@ -1288,7 +1311,9 @@ function networthBannerHTML() {
   </div>`;
 }
 function openAccounts() {
+  let editing = null;
   const draw = () => {
+    const ekind = editing ? editing.kind : ACCOUNT_KINDS[0];
     openSheet(`
       <div class="toolbar"><h2 style="margin:0">Cuentas</h2><button class="x" onclick="closeSheet()">✕</button></div>
       <p class="hint">Efectivo, banco o tarjeta. El saldo se calcula con tu saldo inicial más tus movimientos.</p>
@@ -1296,29 +1321,40 @@ function openAccounts() {
         <div class="list-item">
           <span class="mov-ic acc-ic">${ACCOUNT_ICON[a.kind] || "◆"}</span>
           <div class="grow"><div class="t">${esc(a.name)}</div><div class="s">${esc(a.kind)} · saldo ${fmt(accountBalance(a.id))}</div></div>
+          <button class="btn small line" data-edit-acc="${a.id}">Editar</button>
           <button class="btn small soft-danger" data-del-acc="${a.id}">×</button>
         </div>`).join("")}</div>` : `<div class="card muted">Aún no tienes cuentas.</div>`}
       <div class="card">
-        <h2>Nueva cuenta</h2>
-        <label class="field"><span>Nombre</span><input type="text" id="acc-name" placeholder="Ej. Banco, Efectivo" /></label>
+        <h2>${editing ? "Editar cuenta" : "Nueva cuenta"}</h2>
+        <label class="field"><span>Nombre</span><input type="text" id="acc-name" placeholder="Ej. Banco, Efectivo" value="${editing ? esc(editing.name) : ""}" /></label>
         <div class="label">Tipo</div>
-        <div class="seg" id="acc-kind">${ACCOUNT_KINDS.map((k, i) => `<button data-k="${k}" class="${i === 0 ? "on" : ""}">${k[0].toUpperCase() + k.slice(1)}</button>`).join("")}</div>
+        <div class="seg" id="acc-kind">${ACCOUNT_KINDS.map(k => `<button data-k="${k}" class="${ekind === k ? "on" : ""}">${k[0].toUpperCase() + k.slice(1)}</button>`).join("")}</div>
         <div class="gap"></div>
-        <label class="field"><span>Saldo inicial</span><input type="number" id="acc-open" inputmode="decimal" placeholder="0" /></label>
-        <button class="btn" id="acc-add">Agregar cuenta</button>
+        <label class="field"><span>Saldo inicial</span><input type="number" id="acc-open" inputmode="decimal" placeholder="0" value="${editing ? editing.opening : ""}" /></label>
+        <button class="btn" id="acc-add">${editing ? "Guardar cambios" : "Agregar cuenta"}</button>
+        ${editing ? `<div class="gap"></div><button class="btn line" id="acc-cancel">Cancelar edición</button>` : ""}
       </div>
     `, { fullscreen: true });
-    let kind = ACCOUNT_KINDS[0];
+    let kind = ekind;
     $$("#acc-kind button").forEach(b => b.onclick = () => { kind = b.dataset.k; $$("#acc-kind button").forEach(x => x.classList.toggle("on", x === b)); });
     $("#acc-add").onclick = () => {
       const name = $("#acc-name").value.trim(); if (!name) return toast("Ponle un nombre");
-      DB.accounts.push({ id: uid(), name, kind, opening: parseAmount($("#acc-open").value) }); save(); draw();
+      const opening = parseAmount($("#acc-open").value);
+      if (editing) Object.assign(editing, { name, kind, opening });
+      else DB.accounts.push({ id: uid(), name, kind, opening });
+      editing = null; save(); draw();
     };
+    if (editing) $("#acc-cancel").onclick = () => { editing = null; draw(); };
+    $$("[data-edit-acc]").forEach(b => b.onclick = () => { editing = DB.accounts.find(a => a.id === b.dataset.editAcc); draw(); });
     $$("[data-del-acc]").forEach(b => b.onclick = () => {
       const id = b.dataset.delAcc;
       const used = DB.transactions.some(t => t.account === id || t.from === id || t.to === id);
-      if (used && !confirm("Esta cuenta tiene movimientos. Si la borras, esos movimientos quedarán sin cuenta. ¿Continuar?")) return;
-      DB.accounts = DB.accounts.filter(a => a.id !== id); save(); draw();
+      if (used && !confirm("Esta cuenta tiene movimientos. Al borrarla, sus ingresos y gastos quedarán sin cuenta, y las transferencias que la usen se eliminarán. ¿Continuar?")) return;
+      DB.transactions = DB.transactions.filter(t => !(t.type === "transfer" && (t.from === id || t.to === id)));
+      DB.transactions.forEach(t => { if (t.account === id) t.account = undefined; });
+      DB.accounts = DB.accounts.filter(a => a.id !== id);
+      if (editing && editing.id === id) editing = null;
+      save(); draw();
     });
   };
   draw();
