@@ -925,50 +925,6 @@ SCREENS.settings = () => {
   return `
     <div class="head"><h1>Ajustes</h1><p>Personaliza y respalda.</p></div>
 
-    <div class="section-title">Cuenta y dinero</div>
-
-    <div class="card">
-      <div class="row"><h2 style="margin:0">Cuentas</h2><button class="linkbtn" id="s-accounts">Gestionar</button></div>
-      <div class="hint">Efectivo, banco o tarjeta, con saldo por cuenta y transferencias entre ellas.</div>
-      ${accountsExist() ? `<div class="gap"></div>${DB.accounts.map(a => `<div class="list-item"><span class="mov-ic acc-ic">${ACCOUNT_ICON[a.kind] || "◆"}</span><div class="grow"><div class="t">${esc(a.name)}</div><div class="s">${esc(a.kind)}</div></div><div class="amt ${accountBalance(a.id) < 0 ? "out" : ""}">${fmt(accountBalance(a.id))}</div></div>`).join("")}` : ""}
-    </div>
-
-    <div class="card">
-      <div class="row"><h2 style="margin:0">Categorías</h2></div>
-      <div class="hint">Personaliza tus categorías de gastos e ingresos.</div>
-      <div class="gap"></div>
-      <button class="btn line" id="s-cat-expense">Categorías de gasto (${DB.categories.expense.length})</button>
-      <div class="gap"></div>
-      <button class="btn line" id="s-cat-income">Categorías de ingreso (${DB.categories.income.length})</button>
-    </div>
-
-    <div class="card">
-      <div class="row"><h2 style="margin:0">Presupuestos</h2><button class="linkbtn" id="s-budgets">Editar</button></div>
-      <div class="hint">Define un límite mensual por categoría para recibir alertas.</div>
-    </div>
-
-    <div class="card">
-      <div class="row"><h2 style="margin:0">Movimientos fijos</h2><button class="linkbtn" id="s-recurring">Gestionar</button></div>
-      <div class="hint">Ingresos o gastos que se repiten cada mes (salario, alquiler, etc.). Regístralos con un toque.</div>
-      ${DB.recurring.length ? `<div class="gap"></div>${DB.recurring.map(r => `
-        <div class="list-item">
-          <span class="cdot" style="background:${catColor(r.category, r.type)}"></span>
-          <div class="grow"><div class="t">${esc(r.note || r.category)}</div><div class="s">Día ${r.day} · ${esc(r.category)}${r.account ? " · " + esc(accountName(r.account)) : ""}</div></div>
-          <div class="amt ${r.type === "income" ? "in" : "out"}">${r.type === "income" ? "+" : "−"}${fmt(r.amount)}</div>
-          <button class="btn small line" data-add-rec="${r.id}">Registrar</button>
-        </div>`).join("")}` : ""}
-    </div>
-
-    <div class="card">
-      <div class="row"><h2 style="margin:0">Metas de ahorro</h2><button class="linkbtn" id="s-goals">Gestionar</button></div>
-      <div class="hint">Objetivos de ahorro con progreso.</div>
-    </div>
-
-    <div class="card">
-      <div class="row"><h2 style="margin:0">Deudas y préstamos</h2><button class="linkbtn" id="s-debts">Gestionar</button></div>
-      <div class="hint">Lo que debes y lo que te deben, con fechas de pago, interés estimado y recordatorios.</div>
-    </div>
-
     <div class="section-title">Preferencias</div>
 
     <div class="card">
@@ -1055,13 +1011,6 @@ WIRE.settings = (root) => {
   $("#s-gate", root).onchange = (e) => {
     DB.settings.gate = e.target.checked; save(); toast(e.target.checked ? "Pantalla de inicio activada" : "Pantalla de inicio desactivada");
   };
-  $("#s-cat-expense", root).onclick = () => openCategories("expense");
-  $("#s-cat-income", root).onclick = () => openCategories("income");
-  $("#s-budgets", root).onclick = openBudgets;
-  $("#s-recurring", root).onclick = openRecurring;
-  $("#s-accounts", root).onclick = openAccounts;
-  $("#s-goals", root).onclick = openGoals;
-  $("#s-debts", root).onclick = openDebts;
   $("#s-pin", root).onchange = (e) => {
     if (e.target.checked) { openPinSetup(); e.target.checked = !!DB.settings.pin; }
     else {
@@ -1069,11 +1018,6 @@ WIRE.settings = (root) => {
       else { e.target.checked = true; }
     }
   };
-  $$("[data-add-rec]", root).forEach(b => b.onclick = () => {
-    const r = DB.recurring.find(x => x.id === b.dataset.addRec); if (!r) return;
-    DB.transactions.push({ id: uid(), date: todayISO(), type: r.type, amount: r.amount, category: r.category, note: r.note, account: r.account });
-    save(); toast("Registrado"); render();
-  });
 
   $("#s-export", root).onclick = () => {
     const blob = new Blob([JSON.stringify(DB, null, 2)], { type: "application/json" });
@@ -1098,6 +1042,40 @@ WIRE.settings = (root) => {
       DB = structuredClone(SEED); save(); render(); toast("Datos borrados");
     }
   };
+};
+
+/* ---------------- MÁS (hub de herramientas) ---------------- */
+SCREENS.more = () => {
+  const row = (id, title, sub) => `<button class="hub-row" id="${id}"><div class="hub-txt"><div class="hub-t">${title}</div><div class="hub-s">${sub}</div></div><span class="hub-chev">›</span></button>`;
+  return `
+    <div class="head"><h1>Más</h1><p>Tus herramientas de dinero.</p></div>
+
+    <div class="section-title">Cuentas y categorías</div>
+    <div class="hub">
+      ${row("hub-accounts", "Cuentas", "Saldos y transferencias")}
+      ${row("hub-cat-exp", "Categorías de gasto", "Personaliza tus gastos")}
+      ${row("hub-cat-inc", "Categorías de ingreso", "Personaliza tus ingresos")}
+    </div>
+
+    <div class="section-title">Planeación</div>
+    <div class="hub">
+      ${row("hub-budgets", "Presupuestos", "Límites por categoría")}
+      ${row("hub-recurring", "Movimientos fijos", "Ingresos y gastos que se repiten")}
+      ${row("hub-goals", "Metas de ahorro", "Objetivos con progreso")}
+      ${row("hub-debts", "Deudas y préstamos", "Lo que debes y lo que te deben")}
+      ${row("hub-reconcile", "Conciliación bancaria", "Compara un CSV del banco")}
+    </div>
+  `;
+};
+WIRE.more = (root) => {
+  $("#hub-accounts", root).onclick = openAccounts;
+  $("#hub-cat-exp", root).onclick = () => openCategories("expense");
+  $("#hub-cat-inc", root).onclick = () => openCategories("income");
+  $("#hub-budgets", root).onclick = openBudgets;
+  $("#hub-recurring", root).onclick = openRecurring;
+  $("#hub-goals", root).onclick = openGoals;
+  $("#hub-debts", root).onclick = openDebts;
+  $("#hub-reconcile", root).onclick = openReconcile;
 };
 
 /* ===========================================================
@@ -1252,6 +1230,7 @@ function openRecurring() {
           <span class="cdot" style="background:${catColor(r.category, r.type)}"></span>
           <div class="grow"><div class="t">${esc(r.note || r.category)}</div><div class="s">Día ${r.day} · ${esc(r.category)} · ${r.type === "income" ? "Ingreso" : "Gasto"}${r.account ? " · " + esc(accountName(r.account)) : ""}</div></div>
           <div class="amt ${r.type === "income" ? "in" : "out"}">${r.type === "income" ? "+" : "−"}${fmt(r.amount)}</div>
+          <button class="btn small line" data-add-rec="${r.id}">Registrar</button>
           <button class="btn small soft-danger" data-del-rec="${r.id}">×</button>
         </div>`).join("")}</div>` : `<div class="card muted">Aún no tienes movimientos fijos.</div>`}
 
@@ -1299,6 +1278,11 @@ function openRecurring() {
     };
     $$("[data-del-rec]").forEach(b => b.onclick = () => {
       DB.recurring = DB.recurring.filter(r => r.id !== b.dataset.delRec); save(); draw();
+    });
+    $$("[data-add-rec]").forEach(b => b.onclick = () => {
+      const r = DB.recurring.find(x => x.id === b.dataset.addRec); if (!r) return;
+      DB.transactions.push({ id: uid(), date: todayISO(), type: r.type, amount: r.amount, category: r.category, note: r.note, account: r.account });
+      save(); toast("Registrado"); draw();
     });
   };
   draw();
@@ -1503,6 +1487,7 @@ function openDebts() {
         <div class="bud-top"><span>Saldo ${fmt(bal)}</span><span>${fmt(paid)} / ${fmt(d.principal)}</span></div>
         <div class="kpi-bar"><i style="width:${pct}%"></i></div>
         <div class="hint" style="margin-top:6px">${d.dueDate ? "Vence " + new Date(d.dueDate).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short", year: "numeric" }) : "Sin fecha"}${d.rate ? ` · Interés ~${fmt(mi)}/mes (${d.rate}% ${d.ratePeriod})` : ""}</div>
+        ${(d.payments && d.payments.length) ? `<div class="gap"></div><button class="linkbtn" data-d-hist="${d.id}">Ver historial de pagos (${d.payments.length})</button>` : ""}
         <div class="btn-row" style="margin:12px 0 0">
           ${bal > 0 ? `<button class="btn small" data-d-pay="${d.id}">${d.dir === "owe" ? "+ Pago" : "+ Abono"}</button>` : ""}
           <button class="btn small line" data-d-edit="${d.id}">Editar</button>
@@ -1516,7 +1501,37 @@ function openDebts() {
   $("#d-new").onclick = () => openDebtForm();
   $$("[data-d-edit]").forEach(b => b.onclick = () => openDebtForm(b.dataset.dEdit));
   $$("[data-d-pay]").forEach(b => b.onclick = () => openDebtPayment(b.dataset.dPay));
+  $$("[data-d-hist]").forEach(b => b.onclick = () => openDebtHistory(b.dataset.dHist));
   $$("[data-d-del]").forEach(b => b.onclick = () => { if (confirm("¿Eliminar esta deuda?")) { DB.debts = DB.debts.filter(x => x.id !== b.dataset.dDel); save(); openDebts(); } });
+}
+function openDebtHistory(id) {
+  const d = DB.debts.find(x => x.id === id); if (!d) return;
+  const pays = (d.payments || []).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+  const accName = aid => { const a = DB.accounts.find(x => x.id === aid); return a ? esc(a.name) : ""; };
+  openSheet(`
+    <div class="toolbar"><h2 style="margin:0">Historial de pagos</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="hint">${d.dir === "owe" ? "💸" : "💰"} ${esc(d.name)} · ${pays.length} ${pays.length === 1 ? "movimiento" : "movimientos"} · Total ${fmt(debtPaid(d))}</div>
+    <div class="gap"></div>
+    ${pays.length ? pays.map(p => `
+      <div class="list-item">
+        <span class="mov-ic">${d.dir === "owe" ? "💸" : "💰"}</span>
+        <div class="grow">
+          <div class="t">${fmt(p.amount)}</div>
+          <div class="s">${new Date(p.date).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short", year: "numeric" })}${p.account ? " · " + accName(p.account) : ""}${p.txId ? " · en movimientos" : ""}</div>
+        </div>
+        <button class="btn small soft-danger" data-p-del="${p.id}">Eliminar</button>
+      </div>`).join("") : `<div class="card muted">Sin pagos registrados.</div>`}
+    <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cerrar</button>
+  `, { fullscreen: true });
+  $$("[data-p-del]").forEach(b => b.onclick = () => {
+    const pid = b.dataset.pDel;
+    const p = (d.payments || []).find(x => x.id === pid); if (!p) return;
+    if (!confirm("¿Eliminar este pago?" + (p.txId ? " También se eliminará su movimiento asociado." : ""))) return;
+    if (p.txId) DB.transactions = DB.transactions.filter(t => t.id !== p.txId);
+    d.payments = d.payments.filter(x => x.id !== pid);
+    save();
+    if (d.payments.length) openDebtHistory(id); else { closeSheet(); openDebts(); }
+  });
 }
 function openDebtForm(editId) {
   const ed = editId ? DB.debts.find(d => d.id === editId) : null;
@@ -1576,10 +1591,12 @@ function openDebtPayment(id) {
     const dv = $("#dp-date").value;
     const date = dv ? new Date(dv + "T12:00:00").toISOString() : todayISO();
     d.payments = d.payments || [];
-    d.payments.push({ id: uid(), date, amount: amt, account: sel.link ? sel.account : undefined });
+    let txId;
     if (sel.link && accountsExist()) {
-      DB.transactions.push({ id: uid(), date, type: d.dir === "owe" ? "expense" : "income", amount: amt, category: "Deudas", note: (d.dir === "owe" ? "Pago: " : "Abono: ") + d.name, account: sel.account });
+      txId = uid();
+      DB.transactions.push({ id: txId, date, type: d.dir === "owe" ? "expense" : "income", amount: amt, category: "Deudas", note: (d.dir === "owe" ? "Pago: " : "Abono: ") + d.name, account: sel.account });
     }
+    d.payments.push({ id: uid(), date, amount: amt, account: sel.link ? sel.account : undefined, txId });
     save(); closeSheet(); openDebts(); toast("Registrado");
   };
 }
@@ -1941,10 +1958,7 @@ function openReportPreview() {
 /* ===========================================================
    CONCILIACIÓN BANCARIA (CSV)
    =========================================================== */
-function parseCSV(text) {
-  text = String(text).replace(/^﻿/, "");
-  const firstLine = text.split(/\r?\n/)[0] || "";
-  const delim = (firstLine.split(";").length > firstLine.split(",").length) ? ";" : ",";
+function tokenizeCSV(text, delim) {
   const rows = []; let row = [], cell = "", inQ = false;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
@@ -1958,6 +1972,25 @@ function parseCSV(text) {
   }
   if (cell.length || row.length) { row.push(cell); rows.push(row); }
   return rows.filter(r => r.some(x => String(x).trim() !== ""));
+}
+function parseCSV(text) {
+  text = String(text).replace(/^﻿/, "");
+  const sample = text.split(/\r?\n/).slice(0, 50);
+  const cands = [",", ";", "\t", "|"]; let delim = ",", best = 1;
+  cands.forEach(d => { const cols = Math.max(1, ...sample.map(l => l.split(d).length)); if (cols > best) { best = cols; delim = d; } });
+  return tokenizeCSV(text, delim);
+}
+/* Encuentra la fila real de encabezados (los bancos suelen poner líneas de título antes) */
+function detectHeaderRow(rows) {
+  const KW = ["fecha", "date", "dia", "día", "descrip", "concepto", "detalle", "referencia", "transacc", "glosa", "monto", "importe", "amount", "valor", "débito", "debito", "crédito", "credito", "cargo", "abono", "balance", "saldo"];
+  const maxCols = Math.max(...rows.map(r => r.length));
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (r.length < Math.max(3, maxCols - 1)) continue;
+    const low = r.map(x => String(x).toLowerCase());
+    if (low.some(c => KW.some(k => c.includes(k)))) return i;
+  }
+  return 0;
 }
 function parseMoneyLoose(s) {
   if (s == null) return NaN;
@@ -2052,9 +2085,11 @@ function drawReconUpload() {
     reader.onload = () => {
       const parsed = parseCSV(reader.result);
       if (parsed.length < 2) return toast("El CSV parece vacío o sin filas");
-      reconState.headers = parsed[0];
-      reconState.rows = parsed.slice(1);
-      autodetectMap(parsed[0]);
+      const hi = detectHeaderRow(parsed);
+      reconState.headers = parsed[hi];
+      const hcols = reconState.headers.length;
+      reconState.rows = parsed.slice(hi + 1).filter(r => r.length >= Math.max(2, hcols - 1));
+      autodetectMap(reconState.headers);
       drawReconUpload();
     };
     reader.readAsText(f);
