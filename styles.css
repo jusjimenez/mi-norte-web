@@ -80,9 +80,14 @@ input, textarea, select { -webkit-user-select: text; user-select: text; }
 .lbl { font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--label-2); font-weight: 700; }
 
 /* Encabezado de sección (segmentación) */
-.section-title { font-size: 12px; font-weight: 800; letter-spacing: 0.13em; text-transform: uppercase;
-  color: var(--label-2); margin: 22px 4px 12px; }
-.screen > .section-title:first-of-type { margin-top: 8px; }
+.section-title { display: flex; align-items: center; gap: 10px;
+  font-size: 12.5px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--label); margin: 34px 2px 14px; }
+.section-title::before { content: ""; flex: none; width: 3px; height: 14px; border-radius: 2px;
+  background: linear-gradient(180deg, var(--grad-a), var(--grad-b)); }
+.section-title::after { content: ""; flex: 1; height: 1px;
+  background: linear-gradient(90deg, var(--hairline), transparent); }
+.screen > .section-title:first-of-type { margin-top: 10px; }
 
 /* Hub de herramientas (pestaña Más) */
 .hub { background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius);
