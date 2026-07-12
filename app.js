@@ -2105,10 +2105,25 @@ function autodetectMap(headers) {
   const deb = find(["débito", "debito", "cargo", "salida", "retiro", "debe"]);
   const cred = find(["crédito", "credito", "abono", "depósito", "deposito", "entrada", "haber"]);
   const amt = find(["monto", "importe", "amount", "valor"]);
+  const bal = find(["saldo", "balance", "disponible"]);
   reconState.map.date = d >= 0 ? d : 0;
   reconState.map.desc = de >= 0 ? de : 1;
+  reconState.map.balance = bal;
   if (deb >= 0 && cred >= 0 && deb !== cred) { reconState.map.mode = "split"; reconState.map.debit = deb; reconState.map.credit = cred; }
   else { reconState.map.mode = "single"; reconState.map.amount = amt >= 0 ? amt : 2; }
+}
+/* Saldo actual según el banco: el balance de la fila con la fecha más reciente. */
+function detectBankBalance() {
+  const m = reconState.map, rows = reconState.rows || [];
+  if (m.balance == null || m.balance < 0 || !rows.length) return null;
+  let bestISO = "", bestVal = null;
+  rows.forEach(r => {
+    const v = parseMoneyLoose(r[m.balance]);
+    if (isNaN(v)) return;
+    const iso = parseDateLoose(r[m.date], m.dfmt) || "";
+    if (bestVal == null || iso >= bestISO) { bestISO = iso; bestVal = v; }
+  });
+  return bestVal;
 }
 function drawReconUpload() {
   const rows = reconState.rows;
@@ -2136,6 +2151,9 @@ function drawReconUpload() {
         <option value="mdy" ${reconState.map.dfmt === "mdy" ? "selected" : ""}>MM/DD/AAAA</option>
       </select></label>
       <div class="gap"></div>
+      <label class="field"><span>Saldo actual según el banco (opcional)</span><input type="number" id="rc-bal" inputmode="decimal" placeholder="0" value="${reconState.bankBalance != null ? reconState.bankBalance : ""}" /></label>
+      <div class="hint">${reconState.bankBalance != null ? "Lo tomé del estado de cuenta. " : ""}Con esto ajusto tu cuenta al final para que calce exacto con el banco.</div>
+      <div class="gap"></div>
       <button class="btn" id="rc-run">Conciliar</button>
     ` : `<div class="gap"></div><div class="hint">Consejo: la mayoría de bancos permite descargar los movimientos como CSV o Excel (guárdalo como CSV).</div>`}
     <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cerrar</button>
@@ -2153,6 +2171,7 @@ function drawReconUpload() {
       const hcols = reconState.headers.length;
       reconState.rows = parsed.slice(hi + 1).filter(r => r.length >= Math.max(2, hcols - 1));
       autodetectMap(reconState.headers);
+      reconState.bankBalance = detectBankBalance();
       drawReconUpload();
     };
     reader.readAsText(f);
@@ -2162,6 +2181,7 @@ function drawReconUpload() {
     $("#rc-date").onchange = e => reconState.map.date = +e.target.value;
     $("#rc-desc").onchange = e => reconState.map.desc = +e.target.value;
     $("#rc-dfmt").onchange = e => reconState.map.dfmt = e.target.value;
+    const balEl = $("#rc-bal"); if (balEl) balEl.oninput = e => reconState.bankBalance = e.target.value === "" ? null : parseAmount(e.target.value);
     const paintAmt = () => {
       const mode = reconState.map.mode;
       $("#rc-amt-fields").innerHTML = mode === "single"
@@ -2211,7 +2231,8 @@ function runReconcile() {
     else bankOnly.push(bi);
   });
   const appOnly = app.filter((_, idx) => !used.has(idx));
-  reconState.result = { matched, bankOnly, appOnly,
+  reconState.result = { matched, bankOnly, appOnly, account: acc,
+    bankBalance: reconState.bankBalance != null ? reconState.bankBalance : null,
     bankSum: bank.reduce((s, b) => s + b.amount, 0), appSum: app.reduce((s, a) => s + a.amount, 0), from, to };
   drawReconResults();
 }
@@ -2222,6 +2243,10 @@ function addBankItem(bi) {
 function drawReconResults() {
   const R = reconState.result;
   const diff = R.bankSum - R.appSum;
+  const canAdjust = R.account && R.bankBalance != null;
+  const appBal = canAdjust ? accountBalance(R.account) : 0;
+  const balDiff = canAdjust ? (R.bankBalance - appBal) : 0;
+  const calza = Math.abs(balDiff) < 0.5;
   const signed = (n) => `${n > 0 ? "+" : "−"}${fmt(Math.abs(n))}`;
   const dl = (iso) => new Date(iso).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short", year: "numeric" });
   const bankRow = (bi, extra) => `<div class="list-item"><span class="mov-ic" style="color:${bi.amount > 0 ? "var(--green)" : "var(--red)"}">${bi.amount > 0 ? "↑" : "↓"}</span><div class="grow"><div class="t">${esc(bi.note || "(sin descripción)")}</div><div class="s">${dl(bi.date)}</div></div><div class="amt ${bi.amount > 0 ? "in" : "out"}">${signed(bi.amount)}</div>${extra}</div>`;
@@ -2231,8 +2256,20 @@ function drawReconResults() {
       <div class="metric"><div class="v" style="color:var(--green)">${R.matched.length}</div><div class="k">Coinciden</div></div>
       <div class="metric"><div class="v" style="color:var(--amber)">${R.bankOnly.length}</div><div class="k">Faltan en la app</div></div>
       <div class="metric"><div class="v" style="color:var(--red)">${R.appOnly.length}</div><div class="k">Solo en la app</div></div>
-      <div class="metric"><div class="v">${fmt(Math.abs(diff))}</div><div class="k">Diferencia de saldo</div></div>
+      <div class="metric"><div class="v">${fmt(Math.abs(diff))}</div><div class="k">Dif. de movimientos</div></div>
     </div>
+    ${canAdjust ? `<div class="card">
+      <h2 style="margin:0 0 4px">Saldo de la cuenta</h2>
+      <div class="proj">
+        <div class="proj-row"><span>En la app · ${esc(accountName(R.account))}</span><b>${fmt(appBal)}</b></div>
+        <div class="proj-row"><span>Según el banco</span><b>${fmt(R.bankBalance)}</b></div>
+        <div class="proj-row"><span>Diferencia</span><b style="color:${calza ? "var(--green)" : "var(--amber)"}">${signed(balDiff)}</b></div>
+      </div>
+      ${calza
+        ? `<div class="hint" style="margin-top:10px">✅ Tu cuenta calza exacto con el banco.</div>`
+        : `<div class="gap"></div><button class="btn" id="rc-adjust">Ajustar cuenta para que calce</button>
+           <div class="hint" style="margin-top:8px">${R.bankOnly.length ? "Primero agrega abajo los movimientos que falten; luego ajusta. " : ""}Ajusto el saldo inicial de la cuenta, sin crear un ingreso o gasto que distorsione el mes.</div>`}
+    </div>` : ""}
     ${(!R.bankOnly.length && !R.appOnly.length) ? `<div class="card center"><div style="font-size:22px">✅</div><strong>Todo cuadra</strong><div class="hint">Tus registros coinciden con el banco en este periodo.</div></div>` : ""}
     ${R.bankOnly.length ? `<div class="card">
       <div class="row"><h2 style="margin:0">En el banco, no en la app</h2><button class="linkbtn" id="rc-add-all">Agregar todos</button></div>
@@ -2253,6 +2290,11 @@ function drawReconResults() {
 
   $$("[data-rc-add]").forEach(b => b.onclick = () => { addBankItem(reconState.result.bankOnly[+b.dataset.rcAdd]); save(); runReconcile(); });
   const all = $("#rc-add-all"); if (all) all.onclick = () => { reconState.result.bankOnly.forEach(addBankItem); save(); toast("Movimientos agregados"); runReconcile(); };
+  const adj = $("#rc-adjust"); if (adj) adj.onclick = () => {
+    const a = DB.accounts.find(x => x.id === R.account); if (!a) return;
+    a.opening = (a.opening || 0) + (R.bankBalance - accountBalance(R.account));
+    save(); toast("Cuenta ajustada al saldo del banco"); runReconcile();
+  };
   $$("[data-rc-edit]").forEach(b => b.onclick = () => editTx(b.dataset.rcEdit));
   $("#rc-back").onclick = () => { reconState.result = null; reconState.rows = null; reconState.headers = null; drawReconUpload(); };
 }
