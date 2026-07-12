@@ -1975,9 +1975,18 @@ function tokenizeCSV(text, delim) {
 }
 function parseCSV(text) {
   text = String(text).replace(/^﻿/, "");
-  const sample = text.split(/\r?\n/).slice(0, 50);
-  const cands = [",", ";", "\t", "|"]; let delim = ",", best = 1;
-  cands.forEach(d => { const cols = Math.max(1, ...sample.map(l => l.split(d).length)); if (cols > best) { best = cols; delim = d; } });
+  const sample = text.split(/\r?\n/).filter(l => l.trim() !== "").slice(0, 60);
+  const cands = [",", ";", "\t", "|"]; let delim = ",", bestScore = -1, bestCols = 1;
+  cands.forEach(d => {
+    // Cuenta columnas por línea y busca el número de columnas más frecuente (>1).
+    // Elegimos el delimitador cuya columna dominante aparece en más filas: así una
+    // sola línea de encabezado con tabuladores no gana frente a 20 filas con "|".
+    const counts = {};
+    sample.forEach(l => { const n = l.split(d).length; if (n > 1) counts[n] = (counts[n] || 0) + 1; });
+    let modeCols = 1, modeFreq = 0;
+    for (const k in counts) { if (counts[k] > modeFreq || (counts[k] === modeFreq && +k > modeCols)) { modeFreq = counts[k]; modeCols = +k; } }
+    if (modeFreq > bestScore || (modeFreq === bestScore && modeCols > bestCols)) { bestScore = modeFreq; bestCols = modeCols; delim = d; }
+  });
   return tokenizeCSV(text, delim);
 }
 /* Encuentra la fila real de encabezados (los bancos suelen poner líneas de título antes) */
@@ -2038,7 +2047,8 @@ function autodetectMap(headers) {
   const h = headers.map(x => String(x || "").toLowerCase());
   const find = (kw) => h.findIndex(x => kw.some(k => x.includes(k)));
   const d = find(["fecha", "date", "día", "dia"]);
-  const de = find(["descrip", "concepto", "detalle", "referencia", "transacc", "glosa", "movimiento"]);
+  const deStrong = find(["descrip", "concepto", "detalle", "glosa", "movimiento", "comercio"]);
+  const de = deStrong >= 0 ? deStrong : find(["referencia", "transacc"]);
   const deb = find(["débito", "debito", "cargo", "salida", "retiro", "debe"]);
   const cred = find(["crédito", "credito", "abono", "depósito", "deposito", "entrada", "haber"]);
   const amt = find(["monto", "importe", "amount", "valor"]);
@@ -2298,4 +2308,10 @@ document.addEventListener("visibilitychange", () => {
 /* Service worker (offline) */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+  // Cuando un nuevo service worker toma el control (nueva versión publicada),
+  // recargamos una sola vez para no quedar con index.html nuevo y app.js viejo.
+  let swReloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (swReloaded) return; swReloaded = true; location.reload();
+  });
 }
