@@ -917,7 +917,7 @@ SCREENS.settings = () => {
       ${DB.recurring.length ? `<div class="gap"></div>${DB.recurring.map(r => `
         <div class="list-item">
           <span class="cdot" style="background:${catColor(r.category, r.type)}"></span>
-          <div class="grow"><div class="t">${esc(r.note || r.category)}</div><div class="s">Día ${r.day} · ${esc(r.category)}</div></div>
+          <div class="grow"><div class="t">${esc(r.note || r.category)}</div><div class="s">Día ${r.day} · ${esc(r.category)}${r.account ? " · " + esc(accountName(r.account)) : ""}</div></div>
           <div class="amt ${r.type === "income" ? "in" : "out"}">${r.type === "income" ? "+" : "−"}${fmt(r.amount)}</div>
           <button class="btn small line" data-add-rec="${r.id}">Registrar</button>
         </div>`).join("")}` : ""}
@@ -990,7 +990,7 @@ WIRE.settings = (root) => {
   };
   $$("[data-add-rec]", root).forEach(b => b.onclick = () => {
     const r = DB.recurring.find(x => x.id === b.dataset.addRec); if (!r) return;
-    DB.transactions.push({ id: uid(), date: todayISO(), type: r.type, amount: r.amount, category: r.category, note: r.note });
+    DB.transactions.push({ id: uid(), date: todayISO(), type: r.type, amount: r.amount, category: r.category, note: r.note, account: r.account });
     save(); toast("Registrado"); render();
   });
 
@@ -1030,6 +1030,15 @@ function openSheet(html, { fullscreen = false } = {}) {
   return root;
 }
 function closeSheet() { $("#sheet-root").innerHTML = ""; }
+
+/* Marca (brújula) para usar dentro de la app */
+function brandMark(size) {
+  return `<svg class="brandmark" width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true">
+    <circle cx="50" cy="50" r="31" fill="none" stroke="#ffffff" stroke-opacity=".18" stroke-width="1.4"/>
+    <path d="M50,9 L57,43 L90,50 L57,57 L50,91 L43,57 L10,50 L43,43 Z" fill="url(#grad-ring)"/>
+    <circle cx="50" cy="50" r="4.5" fill="#0b0d12"/>
+  </svg>`;
+}
 
 /* Botón "?" y su mini ventana */
 function helpBtn(key) { return `<button class="help" data-help="${key}" aria-label="Cómo funciona">?</button>`; }
@@ -1160,7 +1169,7 @@ function openRecurring() {
       ${DB.recurring.length ? `<div class="card">${DB.recurring.map(r => `
         <div class="list-item">
           <span class="cdot" style="background:${catColor(r.category, r.type)}"></span>
-          <div class="grow"><div class="t">${esc(r.note || r.category)}</div><div class="s">Día ${r.day} · ${esc(r.category)} · ${r.type === "income" ? "Ingreso" : "Gasto"}</div></div>
+          <div class="grow"><div class="t">${esc(r.note || r.category)}</div><div class="s">Día ${r.day} · ${esc(r.category)} · ${r.type === "income" ? "Ingreso" : "Gasto"}${r.account ? " · " + esc(accountName(r.account)) : ""}</div></div>
           <div class="amt ${r.type === "income" ? "in" : "out"}">${r.type === "income" ? "+" : "−"}${fmt(r.amount)}</div>
           <button class="btn small soft-danger" data-del-rec="${r.id}">×</button>
         </div>`).join("")}</div>` : `<div class="card muted">Aún no tienes movimientos fijos.</div>`}
@@ -1172,6 +1181,9 @@ function openRecurring() {
         <label class="field"><span>Monto</span><input type="number" id="rec-amt" inputmode="decimal" placeholder="0" /></label>
         <label class="field"><span>Descripción</span><input type="text" id="rec-note" placeholder="Alquiler, salario…" /></label>
         <label class="field"><span>Día del mes</span><input type="number" id="rec-day" min="1" max="31" value="1" /></label>
+        ${accountsExist() ? `<div class="label">Cuenta</div>
+        <div class="chips" id="rec-accs">${DB.accounts.map((a, i) => `<button data-a="${a.id}" class="${i === 0 ? "on" : ""}">${esc(a.name)}</button>`).join("")}</div>
+        <div class="gap"></div>` : ""}
         <div class="label">Categoría</div>
         <div class="chips" id="rec-cats"></div>
         <div class="gap"></div>
@@ -1181,6 +1193,7 @@ function openRecurring() {
 
     let recType = "expense";
     let recCat = DB.categories.expense[0];
+    let recAcc = DB.accounts[0] && DB.accounts[0].id;
     const paintCats = () => {
       const cats = DB.categories[recType];
       if (!cats.includes(recCat)) recCat = cats[0];
@@ -1193,11 +1206,14 @@ function openRecurring() {
     $$("#rec-type button").forEach(b => b.onclick = () => {
       recType = b.dataset.t; $$("#rec-type button").forEach(x => x.classList.toggle("on", x === b)); paintCats();
     });
+    $$("#rec-accs button").forEach(b => b.onclick = () => {
+      recAcc = b.dataset.a; $$("#rec-accs button").forEach(x => x.classList.toggle("on", x === b));
+    });
     $("#rec-add").onclick = () => {
       const amt = parseFloat(($("#rec-amt").value || "").replace(",", ".")) || 0;
       if (amt <= 0) return toast("Escribe un monto");
       const day = Math.max(1, Math.min(31, +$("#rec-day").value || 1));
-      DB.recurring.push({ id: uid(), type: recType, amount: amt, category: recCat, note: $("#rec-note").value.trim(), day });
+      DB.recurring.push({ id: uid(), type: recType, amount: amt, category: recCat, note: $("#rec-note").value.trim(), day, account: accountsExist() ? recAcc : undefined });
       save(); draw();
     };
     $$("[data-del-rec]").forEach(b => b.onclick = () => {
@@ -1390,6 +1406,7 @@ function showLock() {
   const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"];
   el.innerHTML = `
     <div class="lock-inner">
+      <div class="lock-mark">${brandMark(58)}</div>
       <div class="lock-title">MI NORTE</div>
       <div class="lock-sub">Ingresa tu PIN</div>
       <div class="pin-dots" id="pin-dots">${dots()}</div>
@@ -1753,6 +1770,7 @@ function renderGate(slot) {
   el.className = "gate";
   el.innerHTML = `
     <div class="gate-top">
+      <div class="gate-brand">${brandMark(30)}<span>MI NORTE</span></div>
       <div class="gate-greet">${greeting}</div>
       <div class="gate-date">${esc(dateLabel)}</div>
     </div>

@@ -426,6 +426,9 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--t
 }
 @keyframes gatefade { from { opacity: 0; transform: scale(1.02); } }
 .gate-top { position: relative; }
+.gate-brand { display: flex; align-items: center; gap: 9px; margin-bottom: 20px; }
+.gate-brand span { font-size: 13px; font-weight: 800; letter-spacing: .18em; opacity: .85; }
+.gate-brand .brandmark { filter: drop-shadow(0 3px 10px rgba(45,212,191,.35)); }
 .gate-greet { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
 .gate-date { font-size: 15px; opacity: .72; margin-top: 2px; text-transform: capitalize; }
 .gate-mid { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 24px 0; }
@@ -455,6 +458,9 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--t
   animation: fade .3s ease;
 }
 .lock-inner { width: 100%; max-width: 300px; text-align: center; }
+.brandmark { display: block; }
+.lock-mark { display: flex; justify-content: center; margin-bottom: 12px; }
+.lock-mark .brandmark { filter: drop-shadow(0 4px 14px rgba(45,212,191,.4)); }
 .lock-title { font-size: 20px; font-weight: 800; letter-spacing: .12em; }
 .lock-sub { font-size: 14px; opacity: .72; margin-top: 6px; }
 .pin-dots { display: flex; gap: 16px; justify-content: center; margin: 26px 0 30px; }
