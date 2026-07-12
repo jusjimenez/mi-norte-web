@@ -344,7 +344,20 @@ function goalPct(g) {
 
 /* ---- Deudas y préstamos ---- */
 function debtPaid(d) { return (d.payments || []).reduce((s, p) => s + p.amount, 0); }
-function debtBalance(d) { return Math.max(0, (d.principal || 0) - debtPaid(d)); }
+/* Cada pago se divide en interés y abono a capital. Pagos viejos (sin el
+   desglose) cuentan como 100% capital, que era el comportamiento anterior. */
+function payCapital(p) { return p.capital != null ? p.capital : p.amount; }
+function payInterest(p) { return p.interest != null ? p.interest : 0; }
+function debtCapitalPaid(d) { return (d.payments || []).reduce((s, p) => s + payCapital(p), 0); }
+function debtInterestPaid(d) { return (d.payments || []).reduce((s, p) => s + payInterest(p), 0); }
+function debtBalance(d) { return Math.max(0, (d.principal || 0) - debtCapitalPaid(d)); }
+/* Interés sugerido para el próximo pago: tasa mensual sobre el saldo actual. */
+function debtSuggestedInterest(d) {
+  const bal = debtBalance(d);
+  if (!d.rate || bal <= 0) return 0;
+  const monthly = d.ratePeriod === "mensual" ? d.rate : d.rate / 12;
+  return Math.round(bal * monthly / 100);
+}
 function debtStatus(d) {
   if (debtBalance(d) <= 0) return "pagada";
   if (!d.dueDate) return "aldia";
@@ -1509,14 +1522,14 @@ function openDebts() {
       <div class="sb"><div class="sb-k">Neto</div><div class="sb-v">${fmt(totalOwed() - totalOwe())}</div></div>
     </div>
     ${DB.debts.length ? DB.debts.map(d => {
-      const bal = debtBalance(d), paid = debtPaid(d), pct = d.principal ? Math.min(100, paid / d.principal * 100) : 0, mi = debtMonthlyInterest(d);
+      const bal = debtBalance(d), cap = debtCapitalPaid(d), pct = d.principal ? Math.min(100, cap / d.principal * 100) : 0, mi = debtMonthlyInterest(d), intPaid = debtInterestPaid(d);
       return `<div class="card">
         <div class="row"><strong>${d.dir === "owe" ? "💸" : "💰"} ${esc(d.name)}</strong>${debtStatusPill(debtStatus(d))}</div>
         ${d.party ? `<div class="hint">${d.dir === "owe" ? "A" : "De"}: ${esc(d.party)}</div>` : ""}
         <div class="gap"></div>
-        <div class="bud-top"><span>Saldo ${fmt(bal)}</span><span>${fmt(paid)} / ${fmt(d.principal)}</span></div>
+        <div class="bud-top"><span>Saldo ${fmt(bal)}</span><span>Capital ${fmt(cap)} / ${fmt(d.principal)}</span></div>
         <div class="kpi-bar"><i style="width:${pct}%"></i></div>
-        <div class="hint" style="margin-top:6px">${d.dueDate ? "Vence " + new Date(d.dueDate).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short", year: "numeric" }) : "Sin fecha"}${d.rate ? ` · Interés ~${fmt(mi)}/mes (${d.rate}% ${d.ratePeriod})` : ""}</div>
+        <div class="hint" style="margin-top:6px">${d.dueDate ? "Vence " + new Date(d.dueDate).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short", year: "numeric" }) : "Sin fecha"}${d.rate ? ` · Interés ~${fmt(mi)}/mes (${d.rate}% ${d.ratePeriod})` : ""}${intPaid > 0.5 ? ` · Intereses pagados ${fmt(intPaid)}` : ""}</div>
         ${(() => { if (bal <= 0 || !d.monthly) return ""; const p = debtProjection(d);
           if (p.never) return `<div class="proj"><div class="proj-warn">⚠️ La cuota (${fmt(d.monthly)}) no cubre el interés del mes (${fmt(p.monthlyInterest)}); el saldo no bajaría.</div></div>`;
           return `<div class="proj"><div class="proj-row"><span>Cuota ${fmt(d.monthly)}/mes · faltan</span><b>${fmtMonths(p.months)}</b></div><div class="proj-row"><span>Aún por pagar</span><b>${fmt(p.totalPay)}</b></div>${p.totalInterest > 0.5 ? `<div class="proj-row"><span>Intereses restantes</span><b>${fmt(p.totalInterest)}</b></div>` : ""}</div>`; })()}
@@ -1541,21 +1554,30 @@ function openDebtHistory(id) {
   const d = DB.debts.find(x => x.id === id); if (!d) return;
   const pays = (d.payments || []).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
   const accName = aid => { const a = DB.accounts.find(x => x.id === aid); return a ? esc(a.name) : ""; };
+  const intTotal = debtInterestPaid(d), capTotal = debtCapitalPaid(d);
   openSheet(`
     <div class="toolbar"><h2 style="margin:0">Historial de pagos</h2><button class="x" onclick="closeSheet()">✕</button></div>
-    <div class="hint">${d.dir === "owe" ? "💸" : "💰"} ${esc(d.name)} · ${pays.length} ${pays.length === 1 ? "movimiento" : "movimientos"} · Total ${fmt(debtPaid(d))}</div>
+    <div class="hint">${d.dir === "owe" ? "💸" : "💰"} ${esc(d.name)} · ${pays.length} ${pays.length === 1 ? "pago" : "pagos"}</div>
+    <div class="gap"></div>
+    <div class="proj">
+      <div class="proj-row"><span>Total pagado</span><b>${fmt(debtPaid(d))}</b></div>
+      <div class="proj-row"><span>Abonado a capital</span><b>${fmt(capTotal)}</b></div>
+      ${intTotal > 0.5 ? `<div class="proj-row"><span>Intereses pagados</span><b>${fmt(intTotal)}</b></div>` : ""}
+    </div>
     <div class="gap"></div>
     ${pays.length ? pays.map(p => `
       <div class="list-item">
         <span class="mov-ic">${d.dir === "owe" ? "💸" : "💰"}</span>
         <div class="grow">
           <div class="t">${fmt(p.amount)}</div>
-          <div class="s">${new Date(p.date).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short", year: "numeric" })}${p.account ? " · " + accName(p.account) : ""}${p.txId ? " · en movimientos" : ""}</div>
+          <div class="s">${new Date(p.date).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short", year: "numeric" })}${payInterest(p) > 0.5 ? ` · interés ${fmt(payInterest(p))} · capital ${fmt(payCapital(p))}` : ""}${p.account ? " · " + accName(p.account) : ""}${p.txId ? " · en movimientos" : ""}</div>
         </div>
+        <button class="btn small line" data-p-edit="${p.id}">Editar</button>
         <button class="btn small soft-danger" data-p-del="${p.id}">Eliminar</button>
       </div>`).join("") : `<div class="card muted">Sin pagos registrados.</div>`}
     <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cerrar</button>
   `, { fullscreen: true });
+  $$("[data-p-edit]").forEach(b => b.onclick = () => openDebtPayment(id, b.dataset.pEdit));
   $$("[data-p-del]").forEach(b => b.onclick = () => {
     const pid = b.dataset.pDel;
     const p = (d.payments || []).find(x => x.id === pid); if (!p) return;
@@ -1590,7 +1612,7 @@ function openDebtForm(editId) {
   `, { fullscreen: true });
   $$("#d-dir button").forEach(b => b.onclick = () => { dir = b.dataset.v; $$("#d-dir button").forEach(x => x.classList.toggle("on", x === b)); });
   $$("#d-rperiod button").forEach(b => b.onclick = () => { ratePeriod = b.dataset.v; $$("#d-rperiod button").forEach(x => x.classList.toggle("on", x === b)); drawProj(); });
-  const paidSoFar = ed ? debtPaid(ed) : 0;
+  const paidSoFar = ed ? debtCapitalPaid(ed) : 0;
   const drawProj = () => {
     const principal = parseAmount($("#d-principal").value);
     const monthly = parseAmount($("#d-monthly").value);
@@ -1617,21 +1639,33 @@ function openDebtForm(editId) {
     save(); openDebts();
   };
 }
-function openDebtPayment(id) {
+function openDebtPayment(id, payId) {
   const d = DB.debts.find(x => x.id === id); if (!d) return;
-  const sel = { link: false, account: DB.accounts[0] ? DB.accounts[0].id : null };
+  const editing = payId ? (d.payments || []).find(p => p.id === payId) : null;
+  const hasRate = d.rate > 0;
+  // Saldo base para sugerir el interés: si editas, se le suma de vuelta el capital de ese pago.
+  const baseBalance = editing ? debtBalance(d) + payCapital(editing) : debtBalance(d);
+  const monthlyRate = hasRate ? (d.ratePeriod === "mensual" ? d.rate : d.rate / 12) / 100 : 0;
+  const sel = { link: editing ? !!editing.txId : false, account: (editing && editing.account) || (DB.accounts[0] ? DB.accounts[0].id : null) };
+  const initAmt = editing ? editing.amount : (d.monthly || "");
+  const initInt = editing ? payInterest(editing) : Math.min(parseAmount(initAmt) || 0, Math.round(baseBalance * monthlyRate));
   openSheet(`
-    <h2>${d.dir === "owe" ? "Registrar pago" : "Registrar abono"}</h2>
-    <div class="hint">${esc(d.name)} · saldo ${fmt(debtBalance(d))}</div>
+    <h2>${editing ? "Editar pago" : (d.dir === "owe" ? "Registrar pago" : "Registrar abono")}</h2>
+    <div class="hint">${esc(d.name)} · saldo ${fmt(baseBalance)}</div>
     <div class="gap"></div>
-    <label class="field"><span>Monto</span><input type="number" id="dp-amt" inputmode="decimal" placeholder="0" /></label>
-    <label class="field"><span>Fecha</span><input type="date" id="dp-date" value="${dateInputValue(todayISO())}" /></label>
+    <label class="field"><span>Monto${d.dir === "owe" ? " pagado" : ""}</span><input type="number" id="dp-amt" inputmode="decimal" placeholder="0" value="${initAmt}" /></label>
+    ${hasRate ? `
+      <label class="field"><span>Interés (${d.rate}% ${d.ratePeriod})</span><input type="number" id="dp-int" inputmode="decimal" placeholder="0" value="${initInt}" /></label>
+      <label class="field"><span>Abono a capital</span><input type="number" id="dp-cap" inputmode="decimal" placeholder="0" /></label>
+      <div class="hint" id="dp-note"></div>
+    ` : ""}
+    <label class="field"><span>Fecha</span><input type="date" id="dp-date" value="${editing ? dateInputValue(editing.date) : dateInputValue(todayISO())}" /></label>
     ${accountsExist() ? `
-      <div class="switch-row"><span>Registrar también como movimiento</span><label class="switch"><input type="checkbox" id="dp-link" /><span class="sl"></span></label></div>
-      <div id="dp-acc-wrap" hidden><div class="gap"></div><div class="label">${d.dir === "owe" ? "Sale de la cuenta" : "Entra a la cuenta"}</div><div class="chips" id="dp-acc">${DB.accounts.map(a => `<button data-a="${a.id}" class="${a.id === sel.account ? "on" : ""}">${esc(a.name)}</button>`).join("")}</div></div>
+      <div class="switch-row"><span>Registrar también como movimiento</span><label class="switch"><input type="checkbox" id="dp-link" ${sel.link ? "checked" : ""} /><span class="sl"></span></label></div>
+      <div id="dp-acc-wrap" ${sel.link ? "" : "hidden"}><div class="gap"></div><div class="label">${d.dir === "owe" ? "Sale de la cuenta" : "Entra a la cuenta"}</div><div class="chips" id="dp-acc">${DB.accounts.map(a => `<button data-a="${a.id}" class="${a.id === sel.account ? "on" : ""}">${esc(a.name)}</button>`).join("")}</div></div>
     ` : ""}
     <div class="gap"></div>
-    <button class="btn" id="dp-save">Guardar</button>
+    <button class="btn" id="dp-save">${editing ? "Guardar cambios" : "Guardar"}</button>
     <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cancelar</button>
   `, { fullscreen: true });
   const lk = $("#dp-link");
@@ -1639,18 +1673,51 @@ function openDebtPayment(id) {
     lk.onchange = () => { sel.link = lk.checked; $("#dp-acc-wrap").hidden = !lk.checked; };
     $$("#dp-acc button").forEach(b => b.onclick = () => { sel.account = b.dataset.a; $$("#dp-acc button").forEach(x => x.classList.toggle("on", x === b)); });
   }
+  if (hasRate) {
+    const amtEl = $("#dp-amt"), intEl = $("#dp-int"), capEl = $("#dp-cap"), noteEl = $("#dp-note");
+    const setCap = () => { capEl.value = Math.round((parseAmount(amtEl.value) - parseAmount(intEl.value)) * 100) / 100; drawNote(); };
+    const drawNote = () => {
+      const cap = parseAmount(capEl.value), intr = parseAmount(intEl.value);
+      const newBal = Math.max(0, baseBalance - cap);
+      noteEl.innerHTML = cap < 0
+        ? `<span style="color:#fca5a5">El interés no puede ser mayor que el monto.</span>`
+        : `De este pago, ${fmt(intr)} es interés y ${fmt(cap)} baja el capital. Saldo quedaría en <b>${fmt(newBal)}</b>.`;
+    };
+    amtEl.oninput = setCap;
+    intEl.oninput = setCap;
+    capEl.oninput = () => { intEl.value = Math.round((parseAmount(amtEl.value) - parseAmount(capEl.value)) * 100) / 100; drawNote(); };
+    setCap();
+  }
   $("#dp-save").onclick = () => {
     const amt = parseAmount($("#dp-amt").value); if (amt <= 0) return toast("Escribe un monto");
+    let interest = hasRate ? parseAmount($("#dp-int").value) : 0;
+    if (interest < 0) interest = 0;
+    if (interest > amt) return toast("El interés no puede ser mayor que el monto");
+    const capital = Math.round((amt - interest) * 100) / 100;
     const dv = $("#dp-date").value;
     const date = dv ? new Date(dv + "T12:00:00").toISOString() : todayISO();
     d.payments = d.payments || [];
-    let txId;
-    if (sel.link && accountsExist()) {
-      txId = uid();
-      DB.transactions.push({ id: txId, date, type: d.dir === "owe" ? "expense" : "income", amount: amt, category: "Deudas", note: (d.dir === "owe" ? "Pago: " : "Abono: ") + d.name, account: sel.account });
+    const note = (d.dir === "owe" ? "Pago: " : "Abono: ") + d.name;
+    if (editing) {
+      Object.assign(editing, { date, amount: amt, interest, capital });
+      if (editing.txId) {
+        const tx = DB.transactions.find(t => t.id === editing.txId);
+        if (sel.link && tx) Object.assign(tx, { date, amount: amt, account: sel.account });
+        else if (!sel.link && tx) { DB.transactions = DB.transactions.filter(t => t.id !== editing.txId); editing.txId = undefined; }
+      } else if (sel.link && accountsExist()) {
+        editing.txId = uid();
+        DB.transactions.push({ id: editing.txId, date, type: d.dir === "owe" ? "expense" : "income", amount: amt, category: "Deudas", note, account: sel.account });
+      }
+      editing.account = sel.link ? sel.account : undefined;
+    } else {
+      let txId;
+      if (sel.link && accountsExist()) {
+        txId = uid();
+        DB.transactions.push({ id: txId, date, type: d.dir === "owe" ? "expense" : "income", amount: amt, category: "Deudas", note, account: sel.account });
+      }
+      d.payments.push({ id: uid(), date, amount: amt, interest, capital, account: sel.link ? sel.account : undefined, txId });
     }
-    d.payments.push({ id: uid(), date, amount: amt, account: sel.link ? sel.account : undefined, txId });
-    save(); closeSheet(); openDebts(); toast("Registrado");
+    save(); closeSheet(); openDebts(); toast(editing ? "Pago actualizado" : "Registrado");
   };
 }
 
