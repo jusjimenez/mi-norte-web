@@ -248,6 +248,10 @@ ul.clean li.row span { display: flex; align-items: center; gap: 10px; }
 .goal { padding: 14px 0; border-bottom: 1px solid var(--sep); }
 .goal:last-child { border-bottom: none; }
 
+/* Fila con interruptor (etiqueta + switch) */
+.switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; }
+.switch-row > span { font-size: 15px; font-weight: 500; }
+
 /* Simulador de compra */
 .sim-cta { margin-bottom: 16px; }
 .pill.big { font-size: 16px; padding: 9px 20px; font-weight: 700; }
