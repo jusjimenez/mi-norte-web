@@ -126,6 +126,18 @@ input, textarea, select { -webkit-user-select: text; user-select: text; }
 .mo-h-lvl.big { font-size: 20px; margin: 2px 0 8px; }
 .mo-step-txt { flex: 1; font-size: 14px; line-height: 1.35; }
 .mo-win { padding: 11px 15px; font-size: 13px; color: var(--label-2); background: var(--fill-2); text-align: center; }
+.mo-safe { display: flex; align-items: center; gap: 12px; padding: 14px 15px; width: 100%;
+  background: none; border: none; color: inherit; font: inherit; text-align: left; }
+.mo-safe-k { flex: 1; color: var(--label-2); font-size: 13.5px; display: flex; align-items: center; gap: 8px; }
+.mo-safe-v { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.mo-safe.crisis { cursor: pointer; }
+.mo-safe.crisis .mo-safe-k { color: var(--amber); font-weight: 700; }
+.mo-safe.crisis .mo-safe-v { font-size: 15px; color: var(--amber); }
+.mo-safe.crisis:active { background: var(--card-press); }
+.gate-safe { margin: -12px 0 18px; font-size: 15.5px; opacity: .95; }
+.gate-safe b { font-weight: 800; }
+.cr-n { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px;
+  border-radius: 999px; background: var(--tint-soft); color: var(--tint); font-weight: 800; font-size: 14px; }
 
 /* Movimientos fijos + próximos pagos */
 .rec-item + .rec-item { border-top: 1px solid var(--sep); margin-top: 6px; padding-top: 8px; }

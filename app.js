@@ -72,6 +72,16 @@ const HELP = {
         <li>Los saldos iniciales no la afectan.</li>
       </ul>`,
   },
+  safeToday: {
+    title: "Para gastar hoy",
+    html: `Es lo que puedes gastar hoy <b>sin comerte los pagos que vienen</b>.
+      <div class="help-eq">(Dinero disponible − pagos hasta fin de mes) ÷ días restantes</div>
+      <ul>
+        <li>Cuenta tus fijos y cuotas de deuda pendientes del mes.</li>
+        <li>Si hoy gastas menos, mañana sube. Si te pasas, baja.</li>
+        <li>No es un castigo: es tu margen real, en un solo número.</li>
+      </ul>`,
+  },
   projection: {
     title: "Proyección de gasto",
     html: `Estima <b>cuánto habrás gastado a fin de mes</b>.
@@ -519,8 +529,90 @@ function upcomingItems(windowDays = 45) {
 function upcomingTotal(days) { return upcomingItems(days).reduce((s, i) => s + i.amount, 0); }
 /* Próximo pago: lo más cercano (incluye vencidos). */
 function nextDue() { return upcomingItems(60)[0] || null; }
+
+/* ===========================================================
+   "PARA HOY" + MODO CRISIS
+   La pregunta real del usuario en modo túnel no es "¿cuánto tengo?"
+   sino "¿cuánto puedo gastar HOY sin meterme en problemas?".
+   =========================================================== */
+function safeToday() {
+  if (!accountsExist()) return null;
+  const now = new Date();
+  const dim = daysInMonth(monthKeyOf(now));
+  const daysLeft = Math.max(1, dim - now.getDate() + 1);
+  const monthEndKey = `${monthKeyOf(now)}-${String(dim).padStart(2, "0")}`;
+  // Compromisos de aquí a fin de mes (incluye vencidos: igual hay que pagarlos)
+  const items = upcomingItems(45).filter(i => i.key <= monthEndKey);
+  const committed = items.reduce((s, i) => s + i.amount, 0);
+  const pool = liquidMoney() - committed;
+  return { pool, committed, daysLeft, items,
+    amount: Math.max(0, Math.floor(pool / daysLeft)),
+    crisis: pool < 0 && items.length > 0 };
+}
+/* Modo crisis: cuando el mes no alcanza, un plan de qué pagar primero
+   en vez de solo mostrar el hueco. Orden: vencidos primero (frenan recargos),
+   luego por fecha; se marca hasta dónde alcanza la plata. */
+function crisisPlan() {
+  const st = safeToday(); if (!st) return null;
+  const liquid = liquidMoney();
+  const items = [...st.items].sort((a, b) => a.daysAway - b.daysAway);
+  let run = 0;
+  const rows = items.map(it => {
+    run += it.amount;
+    const d = it.kind === "debt" ? DB.debts.find(x => x.id === it.id) : null;
+    return { ...it, fits: run <= liquid, pricey: d ? debtAnnualRate(d) >= 30 : false };
+  });
+  return { rows, liquid, committed: st.committed, gap: Math.max(0, st.committed - liquid) };
+}
+function openCrisis() {
+  const plan = crisisPlan(); if (!plan || !plan.rows.length) return;
+  const loc = DB.settings.locale || "es-CR";
+  const dl = k => new Date(k + "T12:00:00").toLocaleDateString(loc, { day: "numeric", month: "short" });
+  const row = (r, i) => `<div class="list-item">
+      <span class="mov-ic cr-n">${i + 1}</span>
+      <div class="grow"><div class="t">${esc(r.name)}${r.pricey ? " 🔥" : ""}</div>
+        <div class="s">${r.daysAway < 0 ? `Vencido hace ${Math.abs(r.daysAway)}d` : dl(r.key)}${r.pricey ? " · interés alto, priorizalo" : ""}</div></div>
+      <div class="amt ${r.fits ? "" : "out"}">${fmt(r.amount)}</div>
+    </div>`;
+  const fits = plan.rows.filter(r => r.fits), waits = plan.rows.filter(r => !r.fits);
+  openSheet(`
+    <div class="toolbar"><h2 style="margin:0">Plan del mes</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <p class="hint">Este mes la plata no cubre todo, y ordenarlo ya es ganarle terreno. Con lo que tienes (${fmt(plan.liquid)}) este sería el orden:</p>
+    ${fits.length ? `<div class="card"><div class="section-title" style="margin:0 0 8px">Pagar primero</div>${fits.map(row).join("")}</div>` : ""}
+    ${waits.length ? `<div class="card"><div class="section-title" style="margin:0 0 8px">${fits.length ? "Hablar antes de que venzan" : "En este orden"}</div>
+      <div class="hint" style="margin-bottom:8px">Para cubrirlo todo faltarían ${fmt(plan.gap)}.${fits.length ? "" : ` Aunque no alcance completo, un abono parcial a lo primero (${fmt(plan.liquid)} que sí tienes) frena recargos.`} Avisar antes de la fecha casi siempre permite mover un pago o dividirlo.</div>
+      ${waits.map((r, i) => row(r, fits.length + i)).join("")}</div>` : ""}
+    <div class="hint">Lo vencido va primero porque es lo que genera recargos. 🔥 = interés alto: cada mes que espera, crece.</div>
+    <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cerrar</button>
+  `, { fullscreen: true });
+}
+
+/* Patrón semanal local (sin IA, sin nube): ¿hay un día que concentra el gasto?
+   La alerta solo aparece ESE día — en el momento de decisión, no después. */
+function weekdayPattern() {
+  const since = Date.now() - 56 * 86400000;
+  const ex = DB.transactions.filter(t => t.type === "expense" && new Date(t.date).getTime() >= since);
+  if (ex.length < 20) return null;                 // sin datos suficientes, sin adivinar
+  const by = [0, 0, 0, 0, 0, 0, 0];
+  ex.forEach(t => { by[new Date(t.date).getDay()] += t.amount; });
+  const total = by.reduce((a, b) => a + b, 0);
+  if (total <= 0) return null;
+  let top = 0; for (let i = 1; i < 7; i++) if (by[i] > by[top]) top = i;
+  const share = by[top] / total;
+  if (share < 0.30) return null;                   // solo patrones claros
+  return { day: top, share: Math.round(share * 100) };
+}
+function weekdayTip() {
+  const p = weekdayPattern(); if (!p) return null;
+  if (new Date().getDay() !== p.day) return null;
+  const names = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+  return `💡 Los ${names[p.day]} se te suele ir ~${p.share}% del gasto de la semana. Hoy es ${names[p.day]}: un respiro antes de cada compra.`;
+}
+
 /* El ÚNICO próximo paso: el más urgente y alcanzable. */
 function nextStep() {
+  const st = safeToday();
+  if (st && st.crisis) return { text: "Este mes la plata no cubre todos los pagos. Veámoslo con calma y ordenemos qué va primero.", cta: "Ver plan", act: "crisis" };
   const overdue = DB.debts.filter(d => d.dir === "owe" && debtStatus(d) === "vencida");
   if (overdue.length) return { text: `Ponte al día con ${esc(overdue[0].name)}. Es lo que más te está costando.`, cta: "Ver deuda", act: "debts" };
   const t = monthTotals(viewMonth);
@@ -906,10 +998,14 @@ function dueLabel(daysAway) {
 function momentoHTML() {
   if (!hasFinData()) return "";
   const score = healthScore(), lvl = healthLevel(score), cd = cushion();
-  const due = nextDue(), step = nextStep(), win = todayWin();
+  const due = nextDue(), step = nextStep(), win = weekdayTip() || todayWin();
+  const st = safeToday();
   return `
     <div class="section-title">Tu momento</div>
     <div class="card momento">
+      ${st ? (st.crisis
+        ? `<button class="mo-safe crisis" id="mo-crisis"><span class="mo-safe-k">Mes apretado: la plata no cubre los pagos</span><b class="mo-safe-v">Ver plan ›</b></button>`
+        : `<div class="mo-safe"><span class="mo-safe-k">Para gastar hoy ${helpBtn("safeToday")}</span><b class="mo-safe-v">${fmt(st.amount)}</b></div>`) : ""}
       ${due ? `<div class="mo-due ${due.daysAway <= 3 ? "urgent" : ""}">
         <span class="mo-due-ic">${due.daysAway < 0 ? "⚠️" : "⏰"}</span>
         <div class="grow"><div class="mo-due-t">${dueLabel(due.daysAway)}</div><div class="mo-due-s">${esc(due.name)}</div></div>
@@ -983,8 +1079,10 @@ WIRE.home = (root) => {
     if (act === "debts") openDebts();
     else if (act === "expense") openTx("expense");
     else if (act === "save") openGoals();
+    else if (act === "crisis") openCrisis();
     else if (act === "reports") { currentTab = "reports"; render(); }
   };
+  const moCr = $("#mo-crisis", root); if (moCr) moCr.onclick = openCrisis;
   const moDue = $(".mo-due", root);
   if (moDue && !moDue.classList.contains("ok")) moDue.style.cursor = "pointer", moDue.onclick = openUpcoming;
   const pr = $("#pend-rem", root); if (pr) pr.onclick = openUpcoming;
@@ -2957,6 +3055,7 @@ function renderGate(slot) {
     <div class="gate-mid">
       <div class="gate-avail-label">Dinero disponible</div>
       <div class="gate-avail">${disponible < 0 ? "−" : ""}${fmtHero(Math.abs(disponible))}</div>
+      ${(() => { const st = safeToday(); return st && !st.crisis ? `<div class="gate-safe">Para gastar hoy: <b>${fmt(st.amount)}</b></div>` : ""; })()}
       ${dueHTML}
       ${step ? `<div class="gate-step">👉 ${step.text}</div>` : ""}
     </div>
