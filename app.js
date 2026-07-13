@@ -27,21 +27,6 @@ const CURRENCIES = [
 ];
 
 /* Frases para la pantalla de inicio (rotan por día y franja) */
-const GATE_PHRASES = [
-  "Registrar cada gasto es un acto de amor por tu futuro.",
-  "La claridad de hoy construye la tranquilidad de mañana.",
-  "Cada colón que anotas es un colón que controlas.",
-  "No se trata de gastar menos, sino de decidir mejor.",
-  "Tu constancia vale más que cualquier ingreso extra.",
-  "Lo que se mide, se mejora. Anota y avanza.",
-  "Un minuto registrando hoy te ahorra un dolor de cabeza mañana.",
-  "El orden en tu dinero es paz en tu mente.",
-  "Pequeños registros diarios, grandes decisiones.",
-  "Saber a dónde va tu dinero es saber a dónde vas tú.",
-  "Ahorrar empieza por observar.",
-  "Hoy eliges: dirigir tu dinero, o que él te dirija a ti.",
-];
-
 /* ---------- Semilla ---------- */
 const SEED = {
   transactions: [],   // {id, date(ISO), type:'income'|'expense'|'transfer', amount, category, note, ref, account, from, to}
@@ -1224,7 +1209,7 @@ SCREENS.settings = () => {
       <div class="row"><h2 style="margin:0">Pantalla de inicio</h2>
         <label class="switch"><input type="checkbox" id="s-gate" ${s.gate !== false ? "checked" : ""} /><span class="sl"></span></label>
       </div>
-      <div class="hint">Una pantalla completa con una frase, en la mañana y en la noche, para invitarte a registrar tus movimientos.</div>
+      <div class="hint">Un chequeo rápido al abrir (mañana y noche): tu dinero disponible, el próximo pago y qué hacer hoy.</div>
     </div>
 
     <div class="section-title">Seguridad</div>
@@ -2595,12 +2580,6 @@ function currentGateSlot() {
   if (h >= 18 && h < 24) return "pm";
   return null;
 }
-function gatePhrase(slot) {
-  const start = new Date(new Date().getFullYear(), 0, 0);
-  const day = Math.floor((Date.now() - start) / 86400000);
-  const idx = (day * 2 + (slot === "pm" ? 1 : 0)) % GATE_PHRASES.length;
-  return GATE_PHRASES[idx];
-}
 function maybeShowGate() {
   if (DB.settings.gate === false) return;
   if (document.querySelector(".gate")) return;      // ya visible
@@ -2614,32 +2593,36 @@ function maybeShowGate() {
 }
 function renderGate(slot) {
   const loc = DB.settings.locale || "es-CR";
-  const greeting = slot === "am" ? "Buenos días" : "Buenas noches";
   const dateLabel = new Date().toLocaleDateString(loc, { weekday: "long", day: "numeric", month: "long" });
-  const t = monthTotals(monthKeyOf(new Date()));
   const registered = registeredToday();
+  const disponible = accountsExist() ? netWorth() : monthTotals(monthKeyOf(new Date())).balance;
+  const due = nextDue();
+  const step = hasFinData() ? nextStep() : null;
+  const dueHTML = due
+    ? `<div class="gate-due ${due.daysAway <= 3 ? "urgent" : ""}"><span class="gd-ic">${due.daysAway < 0 ? "⚠️" : "⏰"}</span><span class="gd-txt">${dueLabel(due.daysAway)} · ${esc(due.name)}</span><b class="gd-amt">${fmt(due.amount)}</b></div>`
+    : `<div class="gate-due ok"><span class="gd-ic">✓</span><span class="gd-txt">Nada vence esta semana</span></div>`;
 
   const el = document.createElement("div");
   el.className = "gate";
   el.innerHTML = `
     <div class="gate-top">
       <div class="gate-brand">${brandMark(30)}<span>MI NORTE</span></div>
-      <div class="gate-greet">${greeting}</div>
+      <div class="gate-greet">${greeting()} 👋</div>
       <div class="gate-date">${esc(dateLabel)}</div>
     </div>
     <div class="gate-mid">
-      <div class="gate-quote">“${esc(gatePhrase(slot))}”</div>
-      <div class="gate-status">${registered
-        ? `✓ Hoy ya registraste movimientos.`
-        : `Aún no registras nada hoy.`}</div>
+      <div class="gate-avail-label">Dinero disponible</div>
+      <div class="gate-avail">${disponible < 0 ? "−" : ""}${fmtHero(Math.abs(disponible))}</div>
+      ${dueHTML}
+      ${step ? `<div class="gate-step">👉 ${step.text}</div>` : ""}
     </div>
     <div class="gate-bottom">
-      <div class="gate-prompt">¿Ya registraste tus movimientos de hoy?</div>
+      <div class="gate-prompt">${registered ? "Hoy ya registraste ✓ · ¿algo más?" : "¿Registramos lo de hoy?"}</div>
       <div class="gate-actions">
         <button class="gbtn expense" id="gate-exp">− Registrar gasto</button>
         <button class="gbtn income" id="gate-inc">+ Registrar ingreso</button>
       </div>
-      <button class="gbtn enter" id="gate-enter" disabled>Leer un momento…</button>
+      <button class="gbtn enter" id="gate-enter" disabled>Un momento…</button>
     </div>`;
   document.body.appendChild(el);
 

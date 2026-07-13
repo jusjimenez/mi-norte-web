@@ -508,6 +508,16 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--t
 .gate-mid { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 24px 0; }
 .gate-quote { font-size: 27px; font-weight: 700; line-height: 1.32; letter-spacing: -0.01em; text-wrap: balance; }
 .gate-status { margin-top: 18px; font-size: 15px; opacity: .8; font-weight: 500; }
+.gate-avail-label { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; opacity: .6; font-weight: 700; }
+.gate-avail { font-size: 46px; font-weight: 800; letter-spacing: -0.03em; margin: 4px 0 22px; font-variant-numeric: tabular-nums; }
+.gate-due { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600;
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.10); border-radius: 13px; padding: 13px 15px; }
+.gd-ic { font-size: 17px; flex: none; }
+.gd-txt { flex: 1; min-width: 0; }
+.gd-amt { flex: none; font-weight: 800; font-variant-numeric: tabular-nums; }
+.gate-due.urgent { background: rgba(251,191,36,.14); border-color: rgba(251,191,36,.30); }
+.gate-due.ok { color: #9be7c4; }
+.gate-step { margin-top: 14px; font-size: 15px; line-height: 1.4; opacity: .92; }
 .gate-bottom { position: relative; }
 .gate-prompt { font-size: 15px; font-weight: 600; opacity: .9; margin-bottom: 12px; text-align: center; }
 .gate-actions { display: flex; gap: 12px; margin-bottom: 12px; }
