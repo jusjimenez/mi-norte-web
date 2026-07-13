@@ -743,6 +743,12 @@ SCREENS.home = () => {
       <div class="rem-txt"><strong>${recurringPendings().length} fijo${recurringPendings().length > 1 ? "s" : ""} por confirmar</strong><span>Toca para revisar tus pagos y cobros del mes.</span></div>
     </div>` : ""}
 
+    ${backupDue() ? `
+    <div class="reminder" id="backup-rem">
+      <div class="rem-ic">💾</div>
+      <div class="rem-txt"><strong>Respalda tus datos</strong><span>${DB.settings.lastBackup ? "Hace tiempo que no respaldas." : "Aún no tienes respaldo."} Un toque para protegerlos.</span></div>
+    </div>` : ""}
+
     ${showReminder() ? `
     <div class="reminder" id="reminder">
       <div class="rem-ic">🔔</div>
@@ -923,6 +929,7 @@ WIRE.home = (root) => {
   const moDue = $(".mo-due", root);
   if (moDue && !moDue.classList.contains("ok")) moDue.style.cursor = "pointer", moDue.onclick = openUpcoming;
   const pr = $("#pend-rem", root); if (pr) pr.onclick = openUpcoming;
+  const br = $("#backup-rem", root); if (br) br.onclick = () => { currentTab = "settings"; render(); };
   $("#h-sim", root).onclick = openSimulator;
   wireTxRows(root);
 };
@@ -1292,16 +1299,17 @@ SCREENS.settings = () => {
 
     <div class="card">
       <h2>Tus datos</h2>
-      <div class="hint">Todo se guarda solo en este dispositivo. Haz respaldos con frecuencia.</div>
+      <div class="hint">Todo se guarda solo en este dispositivo. Sin respaldo, si pierdes el teléfono o borras el navegador, se van. ${s.lastBackup ? `Último respaldo: ${new Date(s.lastBackup).toLocaleDateString(s.locale || "es-CR", { day: "numeric", month: "short", year: "numeric" })}.` : "Aún no has respaldado."}</div>
       <div class="gap"></div>
       <div class="btn-row">
         <button class="btn ghost" id="s-export">Exportar (JSON)</button>
-        <button class="btn line" id="s-import">Importar (JSON)</button>
+        <button class="btn line" id="s-import">Importar</button>
       </div>
+      <button class="btn line" id="s-export-enc">🔒 Exportar cifrado (con contraseña)</button>
       <button class="btn line" id="s-csv-all">Exportar todo (CSV)</button>
       <div class="gap"></div>
       <button class="btn soft-danger" id="s-reset">Borrar todos los datos</button>
-      <input type="file" id="s-import-file" accept="application/json" hidden />
+      <input type="file" id="s-import-file" accept="application/json,.json" hidden />
     </div>
 
     <div class="center hint">MI NORTE · Finanzas personales · versión web</div>
@@ -1335,19 +1343,15 @@ WIRE.settings = (root) => {
   $("#s-export", root).onclick = () => {
     const blob = new Blob([JSON.stringify(DB, null, 2)], { type: "application/json" });
     downloadBlob(blob, "mi-norte-respaldo.json");
+    DB.settings.lastBackup = todayISO(); save(); render(); toast("Respaldo descargado");
   };
+  $("#s-export-enc", root).onclick = openEncryptedExport;
   $("#s-csv-all", root).onclick = () => exportCSV([...DB.transactions].sort((a, b) => new Date(a.date) - new Date(b.date)), "mi-norte-todo.csv");
   $("#s-import", root).onclick = () => $("#s-import-file", root).click();
   $("#s-import-file", root).onchange = (e) => {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const data = JSON.parse(reader.result);
-        if (!data || typeof data !== "object") throw 0;
-        DB = normalize(data); save(); render(); toast("Datos importados");
-      } catch (err) { toast("Archivo no válido"); }
-    };
+    reader.onload = () => importBackupData(reader.result);
     reader.readAsText(file);
   };
   $("#s-reset", root).onclick = () => {
@@ -2291,6 +2295,77 @@ function exportCSV(rows, name) {
   const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
   downloadBlob(blob, name);
   toast("CSV descargado");
+}
+
+/* ===========================================================
+   RESPALDO PROTEGIDO (Fase 4) — cifrado del respaldo, no de los datos vivos
+   =========================================================== */
+async function pbkdfKey(password, salt) {
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: 150000, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+}
+const b64e = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const b64d = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+async function encryptBackup(obj, password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await pbkdfKey(password, salt);
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(obj)));
+  return { minorte_encrypted: 1, salt: b64e(salt), iv: b64e(iv), data: b64e(ct) };
+}
+async function decryptBackup(payload, password) {
+  const key = await pbkdfKey(password, b64d(payload.salt));
+  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64d(payload.iv) }, key, b64d(payload.data));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+function openEncryptedExport() {
+  openSheet(`
+    <h2>Exportar respaldo cifrado</h2>
+    <p class="hint">Protege tu respaldo con una contraseña; la necesitarás para restaurarlo. Anótala en un lugar seguro: si la olvidas, este archivo no se puede abrir.</p>
+    <label class="field"><span>Contraseña</span><input type="password" id="ee-a" autocomplete="new-password" /></label>
+    <label class="field"><span>Repite la contraseña</span><input type="password" id="ee-b" autocomplete="new-password" /></label>
+    <button class="btn" id="ee-save">Exportar cifrado</button>
+    <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cancelar</button>
+  `);
+  $("#ee-save").onclick = async () => {
+    const a = $("#ee-a").value, b = $("#ee-b").value;
+    if (a.length < 4) return toast("Usa al menos 4 caracteres");
+    if (a !== b) return toast("Las contraseñas no coinciden");
+    try {
+      const payload = await encryptBackup(DB, a);
+      downloadBlob(new Blob([JSON.stringify(payload)], { type: "application/json" }), "mi-norte-respaldo-cifrado.json");
+      DB.settings.lastBackup = todayISO(); save(); closeSheet(); render(); toast("Respaldo cifrado descargado");
+    } catch (e) { toast("No se pudo cifrar el respaldo"); }
+  };
+}
+function finishImport(data) {
+  if (!data || typeof data !== "object") return toast("Archivo no válido");
+  DB = normalize(data); save(); render(); toast("Datos importados");
+}
+function importBackupData(text) {
+  let data;
+  try { data = JSON.parse(text); } catch { return toast("Archivo no válido"); }
+  if (data && data.minorte_encrypted) {
+    openSheet(`
+      <h2>Respaldo cifrado</h2>
+      <p class="hint">Escribe la contraseña con la que protegiste este respaldo.</p>
+      <label class="field"><span>Contraseña</span><input type="password" id="pp-a" autocomplete="off" /></label>
+      <button class="btn" id="pp-ok">Restaurar</button>
+      <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cancelar</button>
+    `);
+    $("#pp-ok").onclick = async () => {
+      const v = $("#pp-a").value; if (!v) return;
+      try { const obj = await decryptBackup(data, v); closeSheet(); finishImport(obj); }
+      catch { toast("Contraseña incorrecta o archivo dañado"); }
+    };
+    return;
+  }
+  finishImport(data);
+}
+function daysSince(iso) { return (Date.now() - new Date(iso).getTime()) / 86400000; }
+/* ¿Toca recordar un respaldo? Solo si hay datos y hace >14 días (o nunca). */
+function backupDue() {
+  if (!hasFinData()) return false;
+  return !DB.settings.lastBackup || daysSince(DB.settings.lastBackup) >= 14;
 }
 
 /* ===========================================================
