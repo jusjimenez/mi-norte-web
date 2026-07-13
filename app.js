@@ -510,6 +510,27 @@ function goalPct(g) {
   if (!g.target) return 0;
   return Math.max(0, Math.min(100, (g.saved || 0) / g.target * 100));
 }
+function goalRemaining(g) { return Math.max(0, (g.target || 0) - (g.saved || 0)); }
+/* Cuánto apartar por mes para llegar a la fecha objetivo. */
+function goalMonthlyNeeded(g) {
+  const rem = goalRemaining(g);
+  if (rem <= 0 || !g.targetDate) return 0;
+  const days = (new Date(g.targetDate) - Date.now()) / 86400000;
+  const months = Math.max(1, days / 30);
+  return Math.ceil(rem / months);
+}
+/* Estado de la meta en tono de aliento: cumplida / al día / atrasada. */
+function goalPace(g) {
+  if (goalRemaining(g) <= 0 && (g.target || 0) > 0) return { done: true, label: "¡Meta cumplida! 🎉", tint: "var(--green)" };
+  if (!g.targetDate) return null;
+  const now = Date.now(), start = new Date(g.createdAt || now).getTime(), end = new Date(g.targetDate).getTime();
+  const needed = goalMonthlyNeeded(g);
+  if (end <= now) return { label: "Fecha cumplida", tint: "var(--amber)", needed };
+  const frac = start < end ? Math.max(0, Math.min(1, (now - start) / (end - start))) : 0;
+  const expected = (g.target || 0) * frac;
+  const ahead = (g.saved || 0) >= expected - 0.5;
+  return { label: ahead ? "Vas al día ✓" : "Vas atrasado", tint: ahead ? "var(--green)" : "var(--amber)", ahead, needed };
+}
 
 /* ---- Deudas y préstamos ---- */
 function debtPaid(d) { return (d.payments || []).reduce((s, p) => s + p.amount, 0); }
@@ -1490,10 +1511,24 @@ function openCategories(type) {
 }
 
 /* ---- Presupuestos ---- */
+/* Sugerencia de límite: promedio mensual gastado en la categoría (últimos meses
+   con datos), redondeado a 500 para que quede prolijo. */
+function suggestBudget(cat) {
+  let sum = 0, months = 0, mk = shiftMonth(monthKeyOf(new Date()), -1);
+  for (let i = 0; i < 3; i++) {
+    const t = monthTotals(mk);
+    if (t.count > 0) { const b = categoryBreakdown(mk, "expense").find(x => x.name === cat); sum += b ? b.value : 0; months++; }
+    mk = shiftMonth(mk, -1);
+  }
+  if (!months) return 0;
+  return Math.round(sum / months / 500) * 500;
+}
 function openBudgets() {
+  const hasHist = lastMonths(4).slice(0, -1).some(mk => monthTotals(mk).count > 0);
   openSheet(`
     <div class="toolbar"><h2 style="margin:0">Presupuestos</h2><button class="x" onclick="closeSheet()">✕</button></div>
     <p class="hint">Define un límite mensual por categoría de gasto. Deja en 0 para no limitar.</p>
+    ${hasHist ? `<button class="btn line" id="bud-suggest" style="margin-bottom:14px">✨ Sugerir según tu histórico</button>` : ""}
     <div class="card">
       ${DB.categories.expense.map(c => `
         <label class="field bud-field"><span><i class="cdot" style="background:${catColor(c, "expense")}"></i>${esc(c)}</span>
@@ -1504,6 +1539,12 @@ function openBudgets() {
     <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cerrar</button>
   `, { fullscreen: true });
 
+  const sug = $("#bud-suggest");
+  if (sug) sug.onclick = () => {
+    let filled = 0;
+    $$("[data-bud]").forEach(inp => { const s = suggestBudget(inp.dataset.bud); if (s > 0) { inp.value = s; filled++; } });
+    toast(filled ? "Límites sugeridos, ajústalos y guarda" : "Aún no hay historial suficiente");
+  };
   $("#bud-save").onclick = () => {
     $$("[data-bud]").forEach(inp => {
       const v = parseAmount(inp.value);
@@ -1754,54 +1795,105 @@ function openAccounts() {
 }
 
 /* ---- Metas y deudas ---- */
+function goalLine(g) {
+  const pace = goalPace(g), rem = goalRemaining(g);
+  if (pace && pace.done) return `<span style="color:var(--green)">${pace.label}</span>`;
+  const parts = [`Falta ${fmt(rem)}`];
+  if (g.targetDate) {
+    parts.push(`aparta ${fmt(goalMonthlyNeeded(g))}/mes`);
+    if (pace) parts.push(`<span style="color:${pace.tint}">${pace.label}</span>`);
+  } else parts.push(`${Math.round(goalPct(g))}%`);
+  return parts.join(" · ");
+}
 function goalsCardHTML() {
   return `<div class="card">
-    <div class="row"><h2 style="margin:0">Metas y deudas</h2><button class="linkbtn" id="h-goals">Gestionar</button></div>
+    <div class="row"><h2 style="margin:0">Metas de ahorro</h2><button class="linkbtn" id="h-goals">Gestionar</button></div>
     <div class="gap"></div>
-    ${DB.goals.map(g => { const pct = goalPct(g), rem = Math.max(0, (g.target || 0) - (g.saved || 0));
-      return `<div class="bud">
-        <div class="bud-top"><span>${g.kind === "deuda" ? "🔻" : "🎯"} ${esc(g.name)}</span><span>${fmt(g.saved || 0)} / ${fmt(g.target || 0)}</span></div>
-        <div class="kpi-bar"><i style="width:${pct}%"></i></div>
-        <div class="hint" style="margin-top:6px">${g.kind === "deuda" ? `Falta pagar ${fmt(rem)}` : `Falta ${fmt(rem)} · ${Math.round(pct)}%`}</div>
-      </div>`; }).join("")}
+    ${DB.goals.map(g => `<div class="bud">
+      <div class="bud-top"><span>🎯 ${esc(g.name)}</span><span>${fmt(g.saved || 0)} / ${fmt(g.target || 0)}</span></div>
+      <div class="kpi-bar"><i style="width:${goalPct(g)}%"></i></div>
+      <div class="hint" style="margin-top:6px">${goalLine(g)}</div>
+    </div>`).join("")}
   </div>`;
 }
 function openGoals() {
+  const loc = DB.settings.locale || "es-CR";
   const draw = () => {
     openSheet(`
       <div class="toolbar"><h2 style="margin:0">Metas de ahorro</h2><button class="x" onclick="closeSheet()">✕</button></div>
-      <p class="hint">Fija un objetivo de ahorro y registra tus aportes.</p>
-      ${DB.goals.length ? `<div class="card">${DB.goals.map(g => { const pct = goalPct(g);
+      <p class="hint">Fija un objetivo, ponle fecha y te digo cuánto apartar por mes para llegar.</p>
+      ${DB.goals.length ? `<div class="card">${DB.goals.map(g => {
+        const pace = goalPace(g);
         return `<div class="goal">
           <div class="bud-top"><span>🎯 ${esc(g.name)}</span><span>${fmt(g.saved || 0)} / ${fmt(g.target || 0)}</span></div>
-          <div class="kpi-bar"><i style="width:${pct}%"></i></div>
+          <div class="kpi-bar"><i style="width:${goalPct(g)}%"></i></div>
+          <div class="hint" style="margin-top:6px">${goalLine(g)}${g.targetDate ? ` · para ${new Date(g.targetDate).toLocaleDateString(loc, { month: "short", year: "numeric" })}` : ""}</div>
           <div class="btn-row" style="margin:10px 0 0">
-            <button class="btn small line" data-add-goal="${g.id}">+ Aporte</button>
-            <button class="btn small soft-danger" data-del-goal="${g.id}">Eliminar</button>
+            ${goalRemaining(g) > 0 ? `<button class="btn small" data-add-goal="${g.id}">+ Aporte</button>` : ""}
+            <button class="btn small line" data-edit-goal="${g.id}">Editar</button>
+            <button class="btn small soft-danger" data-del-goal="${g.id}">×</button>
           </div>
         </div>`; }).join("")}</div>` : `<div class="card muted">Aún no tienes metas de ahorro.</div>`}
       <div class="card">
         <h2>Nueva meta</h2>
         <label class="field"><span>Nombre</span><input type="text" id="goal-name" placeholder="Ej. Fondo de emergencia" /></label>
+        ${cushion().monthly > 0 ? `<button class="btn small line" id="goal-cushion" style="margin-bottom:12px">Sugerir colchón de 1 mes (${fmt(Math.round(cushion().monthly))})</button>` : ""}
         <label class="field"><span>Monto objetivo</span><input type="number" id="goal-target" inputmode="decimal" placeholder="0" /></label>
+        <label class="field"><span>Fecha objetivo (opcional)</span><input type="date" id="goal-date" /></label>
         <label class="field"><span>Ya llevas (opcional)</span><input type="number" id="goal-saved" inputmode="decimal" placeholder="0" /></label>
         <button class="btn" id="goal-add">Crear meta</button>
       </div>
     `, { fullscreen: true });
+    const cush = $("#goal-cushion");
+    if (cush) cush.onclick = () => { $("#goal-target").value = Math.round(cushion().monthly); if (!$("#goal-name").value.trim()) $("#goal-name").value = "Colchón de emergencia"; };
     $("#goal-add").onclick = () => {
       const name = $("#goal-name").value.trim(); if (!name) return toast("Ponle un nombre");
       const target = parseAmount($("#goal-target").value); if (target <= 0) return toast("Escribe el objetivo");
-      DB.goals.push({ id: uid(), name, kind: "ahorro", target, saved: parseAmount($("#goal-saved").value) }); save(); draw();
+      const dv = $("#goal-date").value;
+      DB.goals.push({ id: uid(), name, kind: "ahorro", target, saved: parseAmount($("#goal-saved").value), targetDate: dv ? new Date(dv + "T12:00:00").toISOString() : "", createdAt: todayISO() });
+      save(); draw();
     };
-    $$("[data-add-goal]").forEach(b => b.onclick = () => {
-      const g = DB.goals.find(x => x.id === b.dataset.addGoal); if (!g) return;
-      const v = prompt("¿Cuánto aportaste?");
-      const amt = parseFloat((v || "").replace(",", ".")) || 0; if (amt <= 0) return;
-      g.saved = (g.saved || 0) + amt; save(); draw();
-    });
-    $$("[data-del-goal]").forEach(b => b.onclick = () => { DB.goals = DB.goals.filter(g => g.id !== b.dataset.delGoal); save(); draw(); });
+    $$("[data-add-goal]").forEach(b => b.onclick = () => openGoalContribution(b.dataset.addGoal, draw));
+    $$("[data-edit-goal]").forEach(b => b.onclick = () => openGoalForm(b.dataset.editGoal, draw));
+    $$("[data-del-goal]").forEach(b => b.onclick = () => { if (confirm("¿Eliminar esta meta?")) { DB.goals = DB.goals.filter(g => g.id !== b.dataset.delGoal); save(); draw(); } });
   };
   draw();
+}
+function openGoalContribution(id, after) {
+  const g = DB.goals.find(x => x.id === id); if (!g) return;
+  openSheet(`
+    <h2>Aporte a ${esc(g.name)}</h2>
+    <div class="hint">Llevas ${fmt(g.saved || 0)} de ${fmt(g.target)} · falta ${fmt(goalRemaining(g))}.</div>
+    <div class="gap"></div>
+    <label class="field"><span>¿Cuánto apartaste?</span><input type="number" id="gc-amt" inputmode="decimal" placeholder="0" /></label>
+    <button class="btn" id="gc-save">Guardar aporte</button>
+    <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cancelar</button>
+  `);
+  $("#gc-save").onclick = () => {
+    const amt = parseAmount($("#gc-amt").value); if (amt <= 0) return toast("Escribe un monto");
+    g.saved = (g.saved || 0) + amt; save(); closeSheet();
+    if (goalRemaining(g) <= 0) toast("¡Meta cumplida! 🎉"); else toast("Aporte guardado");
+    if (after) after();
+  };
+}
+function openGoalForm(id, after) {
+  const g = DB.goals.find(x => x.id === id); if (!g) return;
+  openSheet(`
+    <h2>Editar meta</h2>
+    <label class="field"><span>Nombre</span><input type="text" id="gf-name" value="${esc(g.name)}" /></label>
+    <label class="field"><span>Monto objetivo</span><input type="number" id="gf-target" inputmode="decimal" value="${g.target || ""}" /></label>
+    <label class="field"><span>Fecha objetivo (opcional)</span><input type="date" id="gf-date" value="${g.targetDate ? dateInputValue(g.targetDate) : ""}" /></label>
+    <label class="field"><span>Ahorrado</span><input type="number" id="gf-saved" inputmode="decimal" value="${g.saved || 0}" /></label>
+    <button class="btn" id="gf-save">Guardar cambios</button>
+    <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cancelar</button>
+  `);
+  $("#gf-save").onclick = () => {
+    const name = $("#gf-name").value.trim(); if (!name) return toast("Ponle un nombre");
+    const target = parseAmount($("#gf-target").value); if (target <= 0) return toast("Escribe el objetivo");
+    const dv = $("#gf-date").value;
+    Object.assign(g, { name, target, saved: parseAmount($("#gf-saved").value), targetDate: dv ? new Date(dv + "T12:00:00").toISOString() : "" });
+    save(); closeSheet(); if (after) after();
+  };
 }
 
 /* ---- Deudas y préstamos ---- */
