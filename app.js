@@ -89,11 +89,11 @@ const HELP = {
   },
   projection: {
     title: "Proyección de gasto",
-    html: `Estima <b>cuánto habrás gastado a fin de mes</b> si sigues a este ritmo.
-      <div class="help-eq">Gasto actual ÷ días transcurridos × días del mes</div>
+    html: `Estima <b>cuánto habrás gastado a fin de mes</b>.
+      <div class="help-eq">Gastado + ritmo de gasto × días que faltan</div>
       <ul>
-        <li>Es una estimación: al inicio del mes es menos precisa.</li>
-        <li>Se afina a medida que registras más gastos.</li>
+        <li>El ritmo mezcla lo que llevas este mes con tu promedio de meses anteriores, así un gasto grande al inicio no la dispara.</li>
+        <li>Es aproximada: se afina conforme avanza el mes.</li>
       </ul>`,
   },
 };
@@ -280,14 +280,29 @@ function lastMonths(n) {
   for (let i = 0; i < n; i++) { arr.unshift(mk); mk = shiftMonth(mk, -1); }
   return arr;
 }
+/* Proyección de gasto a fin de mes.
+   La extrapolación lineal simple (gasto/día × días) se dispara al inicio del
+   mes cuando cae un gasto grande (alquiler, un préstamo). En su lugar mezclamos
+   el ritmo real de este mes con tu promedio histórico: al principio pesa más el
+   histórico (estable), y conforme avanza el mes pesa más el ritmo real. */
 function projectionForMonth(mk) {
   if (!isCurrentMonth(mk)) return null;
-  const now = new Date();
-  const dayOfMonth = now.getDate();
+  const day = new Date().getDate();
   const dim = daysInMonth(mk);
-  const { expense } = monthTotals(mk);
-  if (dayOfMonth <= 0) return null;
-  return Math.round(expense / dayOfMonth * dim);
+  if (day <= 0) return null;
+  const spent = monthTotals(mk).expense;
+  const remaining = dim - day;
+  if (remaining <= 0) return Math.round(spent);           // mes ya terminado
+  // ¿Cuántos meses anteriores tienen datos? Sin histórico, los primeros días
+  // no son confiables, así que no mostramos nada aún.
+  let histCount = 0, mp = shiftMonth(mk, -1);
+  for (let i = 0; i < 6; i++) { if (monthTotals(mp).count > 0) histCount++; mp = shiftMonth(mp, -1); }
+  if (histCount === 0 && day < 5) return null;
+  const histDaily = histCount > 0 ? avgOf("expense") / dim : spent / dim;
+  const thisDaily = spent / day;
+  const w = day / dim;                                     // peso del ritmo real de este mes
+  const daily = w * thisDaily + (1 - w) * histDaily;
+  return Math.round(spent + daily * remaining);
 }
 function budgetStatus(mk) {
   const bd = categoryBreakdown(mk, "expense");
@@ -578,7 +593,7 @@ SCREENS.home = () => {
       <div class="kpi">
         <div class="kpi-k">${isCurrentMonth(viewMonth) ? `Proyección de gasto ${helpBtn("projection")}` : "Movimientos"}</div>
         <div class="kpi-v">${proj != null ? fmt(proj) : t.count}</div>
-        <div class="kpi-foot">${proj != null ? "estimado a fin de mes" : "registrados este mes"}</div>
+        <div class="kpi-foot">${proj != null ? "aprox. a fin de mes" : "registrados este mes"}</div>
       </div>
     </div>
 
