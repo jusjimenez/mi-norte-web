@@ -1565,16 +1565,17 @@ function openDebtHistory(id) {
       ${intTotal > 0.5 ? `<div class="proj-row"><span>Intereses pagados</span><b>${fmt(intTotal)}</b></div>` : ""}
     </div>
     <div class="gap"></div>
-    ${pays.length ? pays.map(p => `
+    ${pays.length ? `<div class="card">${pays.map(p => `
       <div class="list-item">
         <span class="mov-ic">${d.dir === "owe" ? "💸" : "💰"}</span>
         <div class="grow">
           <div class="t">${fmt(p.amount)}</div>
-          <div class="s">${new Date(p.date).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short", year: "numeric" })}${payInterest(p) > 0.5 ? ` · interés ${fmt(payInterest(p))} · capital ${fmt(payCapital(p))}` : ""}${p.account ? " · " + accName(p.account) : ""}${p.txId ? " · en movimientos" : ""}</div>
+          <div class="s">${new Date(p.date).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short", year: "numeric" })}${p.account ? " · " + accName(p.account) : ""}${p.txId ? " · en movimientos" : ""}</div>
+          ${payInterest(p) > 0.5 ? `<div class="s">Interés ${fmt(payInterest(p))} · Capital ${fmt(payCapital(p))}</div>` : ""}
         </div>
         <button class="btn small line" data-p-edit="${p.id}">Editar</button>
-        <button class="btn small soft-danger" data-p-del="${p.id}">Eliminar</button>
-      </div>`).join("") : `<div class="card muted">Sin pagos registrados.</div>`}
+        <button class="btn small soft-danger" data-p-del="${p.id}" aria-label="Eliminar">×</button>
+      </div>`).join("")}</div>` : `<div class="card muted">Sin pagos registrados.</div>`}
     <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cerrar</button>
   `, { fullscreen: true });
   $$("[data-p-edit]").forEach(b => b.onclick = () => openDebtPayment(id, b.dataset.pEdit));
@@ -1657,7 +1658,8 @@ function openDebtPayment(id, payId) {
     ${hasRate ? `
       <label class="field"><span>Interés (${d.rate}% ${d.ratePeriod})</span><input type="number" id="dp-int" inputmode="decimal" placeholder="0" value="${initInt}" /></label>
       <label class="field"><span>Abono a capital</span><input type="number" id="dp-cap" inputmode="decimal" placeholder="0" /></label>
-      <div class="hint" id="dp-note"></div>
+      <div class="hint" id="dp-note" style="margin:2px 2px 4px"></div>
+      <div class="gap"></div>
     ` : ""}
     <label class="field"><span>Fecha</span><input type="date" id="dp-date" value="${editing ? dateInputValue(editing.date) : dateInputValue(todayISO())}" /></label>
     ${accountsExist() ? `
