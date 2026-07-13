@@ -403,24 +403,63 @@ function healthLevel(score) {
   if (score <= 80) return { name: "Con base sólida", tint: "var(--green)" };
   return { name: "Rumbo a la libertad", tint: "var(--green)" };
 }
-/* Próximo pago: lo más cercano entre deudas con fecha y fijos del mes. */
-function nextDue() {
-  const items = [];
+/* ===========================================================
+   MOVIMIENTOS FIJOS + PRÓXIMOS PAGOS (Fase 2)
+   =========================================================== */
+function recurringDueDate(r, y, m) {
+  const dim = new Date(y, m + 1, 0).getDate();
+  return new Date(y, m, Math.min(r.day || 1, dim), 12);
+}
+/* ¿La ocurrencia de ESTE mes ya venció y aún no se registró? */
+function recurringPending(r) {
+  const now = new Date();
+  if (r.lastPosted === monthKeyOf(now)) return false;
+  const due = recurringDueDate(r, now.getFullYear(), now.getMonth());
+  return dateInputValue(due.toISOString()) <= todayKeyStr();
+}
+function recurringPendings() { return DB.recurring.filter(recurringPending); }
+/* La próxima ocurrencia futura (cuando la de este mes ya se registró o aún no llega). */
+function recurringNextDate(r) {
+  const now = new Date();
+  let due = recurringDueDate(r, now.getFullYear(), now.getMonth());
+  if (r.lastPosted === monthKeyOf(now) || dateInputValue(due.toISOString()) < todayKeyStr())
+    due = recurringDueDate(r, now.getFullYear(), now.getMonth() + 1);
+  return due;
+}
+function postRecurring(r) {
+  const now = new Date();
+  const due = recurringDueDate(r, now.getFullYear(), now.getMonth());
+  DB.transactions.push({ id: uid(), date: due.toISOString(), type: r.type, amount: r.amount, category: r.category, note: r.note, account: r.account });
+  r.lastPosted = monthKeyOf(now);
+}
+function skipRecurring(r) { r.lastPosted = monthKeyOf(new Date()); }
+/* Registra automáticamente los fijos marcados como automáticos que ya vencieron. */
+function maybeApplyRecurring() {
+  let changed = false;
+  DB.recurring.forEach(r => { if (r.auto && recurringPending(r)) { postRecurring(r); changed = true; } });
+  if (changed) save();
+  return changed;
+}
+/* Salidas próximas (deudas con fecha + fijos de gasto), ordenadas por fecha. */
+function upcomingItems(windowDays = 45) {
   const todayKey = todayKeyStr();
+  const daysAwayOf = k => Math.round((new Date(k + "T12:00:00") - new Date(todayKey + "T12:00:00")) / 86400000);
+  const items = [];
   DB.debts.filter(d => d.dir === "owe" && debtBalance(d) > 0 && d.dueDate).forEach(d => {
-    items.push({ key: dateInputValue(d.dueDate), name: d.name, amount: d.monthly > 0 ? d.monthly : debtBalance(d), kind: "debt", id: d.id });
+    const key = dateInputValue(d.dueDate);
+    items.push({ kind: "debt", id: d.id, name: d.name, amount: d.monthly > 0 ? Math.min(d.monthly, debtBalance(d)) : debtBalance(d), key, daysAway: daysAwayOf(key), pending: false });
   });
   DB.recurring.filter(r => r.type === "expense").forEach(r => {
-    const now = new Date(); let due = new Date(now.getFullYear(), now.getMonth(), Math.min(r.day, daysInMonth(monthKeyOf(now))), 12);
-    if (dateInputValue(due.toISOString()) < todayKey) due = new Date(now.getFullYear(), now.getMonth() + 1, Math.min(r.day, 28), 12);
-    items.push({ key: dateInputValue(due.toISOString()), name: r.note || r.category, amount: r.amount, kind: "fixed", id: r.id });
+    const pending = recurringPending(r);
+    const now = new Date();
+    const key = pending ? dateInputValue(recurringDueDate(r, now.getFullYear(), now.getMonth()).toISOString()) : dateInputValue(recurringNextDate(r).toISOString());
+    items.push({ kind: "fixed", id: r.id, name: r.note || r.category, amount: r.amount, key, daysAway: daysAwayOf(key), pending });
   });
-  if (!items.length) return null;
-  items.sort((a, b) => a.key < b.key ? -1 : 1);
-  const it = items[0];
-  it.daysAway = Math.round((new Date(it.key + "T12:00:00") - new Date(todayKey + "T12:00:00")) / 86400000);
-  return it;
+  return items.filter(it => it.daysAway <= windowDays).sort((a, b) => a.key < b.key ? -1 : 1);
 }
+function upcomingTotal(days) { return upcomingItems(days).reduce((s, i) => s + i.amount, 0); }
+/* Próximo pago: lo más cercano (incluye vencidos). */
+function nextDue() { return upcomingItems(60)[0] || null; }
 /* El ÚNICO próximo paso: el más urgente y alcanzable. */
 function nextStep() {
   const overdue = DB.debts.filter(d => d.dir === "owe" && debtStatus(d) === "vencida");
@@ -677,6 +716,12 @@ SCREENS.home = () => {
     <div class="section-title">Este mes</div>
     ${monthNav()}
 
+    ${recurringPendings().length ? `
+    <div class="reminder" id="pend-rem">
+      <div class="rem-ic">🧾</div>
+      <div class="rem-txt"><strong>${recurringPendings().length} fijo${recurringPendings().length > 1 ? "s" : ""} por confirmar</strong><span>Toca para revisar tus pagos y cobros del mes.</span></div>
+    </div>` : ""}
+
     ${showReminder() ? `
     <div class="reminder" id="reminder">
       <div class="rem-ic">🔔</div>
@@ -854,8 +899,9 @@ WIRE.home = (root) => {
     else if (act === "save") openGoals();
     else if (act === "reports") { currentTab = "reports"; render(); }
   };
-  const moDue = $(".mo-due.urgent, .mo-due:not(.ok)", root);
-  if (moDue) moDue.onclick = () => { if (DB.debts.some(d => d.dueDate)) openDebts(); };
+  const moDue = $(".mo-due", root);
+  if (moDue && !moDue.classList.contains("ok")) moDue.style.cursor = "pointer", moDue.onclick = openUpcoming;
+  const pr = $("#pend-rem", root); if (pr) pr.onclick = openUpcoming;
   $("#h-sim", root).onclick = openSimulator;
   wireTxRows(root);
 };
@@ -1305,6 +1351,7 @@ SCREENS.more = () => {
 
     <div class="section-title">Planeación</div>
     <div class="hub">
+      ${row("hub-upcoming", "Próximos pagos", "Lo que se te viene este mes")}
       ${row("hub-budgets", "Presupuestos", "Límites por categoría")}
       ${row("hub-recurring", "Movimientos fijos", "Ingresos y gastos que se repiten")}
       ${row("hub-goals", "Metas de ahorro", "Objetivos con progreso")}
@@ -1317,6 +1364,7 @@ WIRE.more = (root) => {
   $("#hub-accounts", root).onclick = openAccounts;
   $("#hub-cat-exp", root).onclick = () => openCategories("expense");
   $("#hub-cat-inc", root).onclick = () => openCategories("income");
+  $("#hub-upcoming", root).onclick = openUpcoming;
   $("#hub-budgets", root).onclick = openBudgets;
   $("#hub-recurring", root).onclick = openRecurring;
   $("#hub-goals", root).onclick = openGoals;
@@ -1466,19 +1514,33 @@ function openBudgets() {
 }
 
 /* ---- Movimientos fijos (recurrentes) ---- */
+function recurringDoneThisMonth(r) { return r.lastPosted === monthKeyOf(new Date()); }
 function openRecurring() {
   const draw = () => {
+    const loc = DB.settings.locale || "es-CR";
+    const recRow = (r) => {
+      const pending = recurringPending(r), done = recurringDoneThisMonth(r);
+      const status = pending ? `<span class="rec-st pend">Pendiente este mes</span>`
+        : done ? `<span class="rec-st ok">✓ Registrado este mes</span>`
+        : `Próximo: ${recurringNextDate(r).toLocaleDateString(loc, { day: "numeric", month: "short" })}`;
+      const actions = pending
+        ? `<button class="btn small" data-conf-rec="${r.id}">${r.type === "income" ? "Confirmar ingreso" : "Confirmar pago"}</button><button class="btn small line" data-skip-rec="${r.id}">Saltar</button>`
+        : done ? ""
+        : `<button class="btn small line" data-add-rec="${r.id}">Registrar ahora</button>`;
+      return `<div class="rec-item">
+        <div class="list-item" style="padding-bottom:6px">
+          <span class="cdot" style="background:${catColor(r.category, r.type)}"></span>
+          <div class="grow"><div class="t">${esc(r.note || r.category)}${r.auto ? ` <span class="rec-badge">🔁 Auto</span>` : ""}</div>
+            <div class="s">Día ${r.day} · ${r.type === "income" ? "Ingreso" : "Gasto"}${r.account ? " · " + esc(accountName(r.account)) : ""} · ${status}</div></div>
+          <div class="amt ${r.type === "income" ? "in" : "out"}">${r.type === "income" ? "+" : "−"}${fmt(r.amount)}</div>
+        </div>
+        <div class="btn-row" style="margin:0 0 2px 34px">${actions}<button class="btn small soft-danger" data-del-rec="${r.id}">Eliminar</button></div>
+      </div>`;
+    };
     openSheet(`
       <div class="toolbar"><h2 style="margin:0">Movimientos fijos</h2><button class="x" onclick="closeSheet()">✕</button></div>
-      <p class="hint">Plantillas que se repiten cada mes. Regístralas con un toque desde Ajustes.</p>
-      ${DB.recurring.length ? `<div class="card">${DB.recurring.map(r => `
-        <div class="list-item">
-          <span class="cdot" style="background:${catColor(r.category, r.type)}"></span>
-          <div class="grow"><div class="t">${esc(r.note || r.category)}</div><div class="s">Día ${r.day} · ${esc(r.category)} · ${r.type === "income" ? "Ingreso" : "Gasto"}${r.account ? " · " + esc(accountName(r.account)) : ""}</div></div>
-          <div class="amt ${r.type === "income" ? "in" : "out"}">${r.type === "income" ? "+" : "−"}${fmt(r.amount)}</div>
-          <button class="btn small line" data-add-rec="${r.id}">Registrar</button>
-          <button class="btn small soft-danger" data-del-rec="${r.id}">×</button>
-        </div>`).join("")}</div>` : `<div class="card muted">Aún no tienes movimientos fijos.</div>`}
+      <p class="hint">Ingresos y gastos que se repiten cada mes (alquiler, salario, servicios). Déjalos en automático o confírmalos con un toque cuando toquen.</p>
+      ${DB.recurring.length ? `<div class="card">${DB.recurring.map(recRow).join("")}</div>` : `<div class="card muted">Aún no tienes movimientos fijos.</div>`}
 
       <div class="card">
         <h2>Nuevo fijo</h2>
@@ -1493,6 +1555,9 @@ function openRecurring() {
         <div class="label">Categoría</div>
         <div class="chips" id="rec-cats"></div>
         <div class="gap"></div>
+        <div class="switch-row"><span>Registrarlo automáticamente cada mes</span><label class="switch"><input type="checkbox" id="rec-auto" /><span class="sl"></span></label></div>
+        <div class="hint">Si lo activas, se anota solo el día indicado. Si no, te aparecerá para confirmarlo.</div>
+        <div class="gap"></div>
         <button class="btn" id="rec-add">Agregar fijo</button>
       </div>
     `, { fullscreen: true });
@@ -1500,6 +1565,7 @@ function openRecurring() {
     let recType = "expense";
     let recCat = DB.categories.expense[0];
     let recAcc = DB.accounts[0] && DB.accounts[0].id;
+    let recAuto = false;
     const paintCats = () => {
       const cats = DB.categories[recType];
       if (!cats.includes(recCat)) recCat = cats[0];
@@ -1515,23 +1581,62 @@ function openRecurring() {
     $$("#rec-accs button").forEach(b => b.onclick = () => {
       recAcc = b.dataset.a; $$("#rec-accs button").forEach(x => x.classList.toggle("on", x === b));
     });
+    const autoEl = $("#rec-auto"); if (autoEl) autoEl.onchange = () => recAuto = autoEl.checked;
     $("#rec-add").onclick = () => {
       const amt = parseFloat(($("#rec-amt").value || "").replace(",", ".")) || 0;
       if (amt <= 0) return toast("Escribe un monto");
       const day = Math.max(1, Math.min(31, +$("#rec-day").value || 1));
-      DB.recurring.push({ id: uid(), type: recType, amount: amt, category: recCat, note: $("#rec-note").value.trim(), day, account: accountsExist() ? recAcc : undefined });
+      DB.recurring.push({ id: uid(), type: recType, amount: amt, category: recCat, note: $("#rec-note").value.trim(), day, account: accountsExist() ? recAcc : undefined, auto: recAuto });
       save(); draw();
     };
     $$("[data-del-rec]").forEach(b => b.onclick = () => {
       DB.recurring = DB.recurring.filter(r => r.id !== b.dataset.delRec); save(); draw();
     });
-    $$("[data-add-rec]").forEach(b => b.onclick = () => {
-      const r = DB.recurring.find(x => x.id === b.dataset.addRec); if (!r) return;
-      DB.transactions.push({ id: uid(), date: todayISO(), type: r.type, amount: r.amount, category: r.category, note: r.note, account: r.account });
-      save(); toast("Registrado"); draw();
-    });
+    $$("[data-conf-rec]").forEach(b => b.onclick = () => { const r = DB.recurring.find(x => x.id === b.dataset.confRec); if (r) { postRecurring(r); save(); toast("Registrado"); draw(); } });
+    $$("[data-skip-rec]").forEach(b => b.onclick = () => { const r = DB.recurring.find(x => x.id === b.dataset.skipRec); if (r) { skipRecurring(r); save(); toast("Saltado este mes"); draw(); } });
+    $$("[data-add-rec]").forEach(b => b.onclick = () => { const r = DB.recurring.find(x => x.id === b.dataset.addRec); if (r) { postRecurring(r); save(); toast("Registrado"); draw(); } });
   };
   draw();
+}
+/* ---- Próximos pagos (calendario de flujo) ---- */
+function openUpcoming() {
+  const loc = DB.settings.locale || "es-CR";
+  const pend = recurringPendings();
+  const items = upcomingItems(45).filter(i => !i.pending);
+  const total30 = Math.round(upcomingTotal(30));
+  const dl = k => new Date(k + "T12:00:00").toLocaleDateString(loc, { weekday: "short", day: "numeric", month: "short" });
+  const when = da => da < 0 ? `Vencido hace ${Math.abs(da)}d` : da === 0 ? "Hoy" : da === 1 ? "Mañana" : `En ${da} días`;
+  const row = it => `<div class="list-item ${it.kind === "debt" ? "up-debt" : ""}" ${it.kind === "debt" ? `data-up-debt="${it.id}"` : ""}>
+      <span class="mov-ic">${it.kind === "debt" ? "💸" : "🧾"}</span>
+      <div class="grow"><div class="t">${esc(it.name)}</div><div class="s ${it.daysAway < 0 ? "over" : ""}">${dl(it.key)} · ${when(it.daysAway)}</div></div>
+      <div class="amt out">−${fmt(it.amount)}</div>
+    </div>`;
+  openSheet(`
+    <div class="toolbar"><h2 style="margin:0">Próximos pagos</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="card center">
+      <div class="lbl">En los próximos 30 días</div>
+      <div class="mo-h-score big"><b>${fmt(total30)}</b></div>
+      <div class="hint">Esto es lo que se te viene. Tenlo en el radar.</div>
+    </div>
+    ${pend.length ? `<div class="card">
+      <div class="section-title" style="margin:0 0 8px">Por confirmar</div>
+      <div class="hint" style="margin-bottom:10px">Fijos que ya tocaban este mes. Confírmalos si ya pasaron, o sáltalos.</div>
+      ${pend.map(r => `<div class="rec-item">
+        <div class="list-item" style="padding-bottom:6px">
+          <span class="cdot" style="background:${catColor(r.category, r.type)}"></span>
+          <div class="grow"><div class="t">${esc(r.note || r.category)}</div><div class="s">Día ${r.day} · ${r.type === "income" ? "Ingreso" : "Gasto"}</div></div>
+          <div class="amt ${r.type === "income" ? "in" : "out"}">${r.type === "income" ? "+" : "−"}${fmt(r.amount)}</div>
+        </div>
+        <div class="btn-row" style="margin:0 0 2px 34px"><button class="btn small" data-conf-rec="${r.id}">${r.type === "income" ? "Confirmar" : "Confirmar pago"}</button><button class="btn small line" data-skip-rec="${r.id}">Saltar</button></div>
+      </div>`).join("")}
+    </div>` : ""}
+    ${items.length ? `<div class="card"><div class="section-title" style="margin:0 0 8px">Se viene</div>${items.map(row).join("")}</div>`
+      : (pend.length ? "" : `<div class="card muted">No tienes pagos próximos. Agrega deudas con fecha de pago o movimientos fijos y aparecerán aquí.</div>`)}
+    <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cerrar</button>
+  `, { fullscreen: true });
+  $$("[data-conf-rec]").forEach(b => b.onclick = () => { const r = DB.recurring.find(x => x.id === b.dataset.confRec); if (r) { postRecurring(r); save(); toast("Registrado"); openUpcoming(); } });
+  $$("[data-skip-rec]").forEach(b => b.onclick = () => { const r = DB.recurring.find(x => x.id === b.dataset.skipRec); if (r) { skipRecurring(r); save(); toast("Saltado"); openUpcoming(); } });
+  $$("[data-up-debt]").forEach(b => b.onclick = () => openDebts());
 }
 
 /* ---- Transferencia entre cuentas ---- */
@@ -2661,13 +2766,14 @@ document.addEventListener("click", (e) => {
   const h = e.target.closest("[data-help]");
   if (h) { e.stopPropagation(); openHelp(h.dataset.help); }
 });
+maybeApplyRecurring();
 render();
 showLock();
 maybeShowGate();
 
-/* Al volver a la app (PWA reanudada): pedir PIN y, si toca, mostrar la pantalla de inicio */
+/* Al volver a la app (PWA reanudada): aplicar fijos automáticos, pedir PIN y, si toca, mostrar la pantalla de inicio */
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") { showLock(); maybeShowGate(); }
+  if (document.visibilityState === "visible") { if (maybeApplyRecurring()) render(); showLock(); maybeShowGate(); }
 });
 
 /* Service worker (offline) */

@@ -127,6 +127,15 @@ input, textarea, select { -webkit-user-select: text; user-select: text; }
 .mo-step-txt { flex: 1; font-size: 14px; line-height: 1.35; }
 .mo-win { padding: 11px 15px; font-size: 13px; color: var(--label-2); background: var(--fill-2); text-align: center; }
 
+/* Movimientos fijos + próximos pagos */
+.rec-item + .rec-item { border-top: 1px solid var(--sep); margin-top: 6px; padding-top: 8px; }
+.rec-badge { font-size: 10.5px; font-weight: 800; letter-spacing: .02em; color: var(--tint);
+  background: var(--tint-soft); border-radius: 999px; padding: 2px 7px; margin-left: 4px; vertical-align: 1px; }
+.rec-st.pend { color: var(--amber); font-weight: 700; }
+.rec-st.ok { color: var(--green); font-weight: 700; }
+.list-item .s.over { color: var(--red); font-weight: 700; }
+.up-debt { cursor: pointer; }
+
 /* Proyección de pago de deudas */
 .proj { margin-top: 10px; background: var(--card-2); border: 1px solid var(--card-border);
   border-radius: 12px; padding: 4px 12px; }
