@@ -331,6 +331,136 @@ function accountBalance(id) {
 }
 function netWorth() { return DB.accounts.reduce((s, a) => s + accountBalance(a.id), 0); }
 
+/* ===========================================================
+   SALUD FINANCIERA (Fase 1) — pensado para alentar, no juzgar
+   =========================================================== */
+/* Dinero líquido disponible: efectivo + banco (solo saldos positivos). */
+function liquidMoney() {
+  return DB.accounts
+    .filter(a => a.kind === "efectivo" || a.kind === "banco" || a.kind === "otro")
+    .reduce((s, a) => s + Math.max(0, accountBalance(a.id)), 0);
+}
+/* Patrimonio neto real = cuentas − lo que debes + lo que te deben. */
+function trueNetWorth() { return netWorth() - totalOwe() + totalOwed(); }
+function avgMonthlyExpense() {
+  const a = avgOf("expense");
+  if (a > 0) return a;
+  const rec = DB.recurring.filter(r => r.type === "expense").reduce((s, r) => s + r.amount, 0);
+  return rec > 0 ? rec : monthTotals(monthKeyOf(new Date())).expense;
+}
+/* Colchón: cuántos días/meses de gasto cubren tus cuentas líquidas. */
+function cushion() {
+  const liquid = liquidMoney();
+  const monthly = avgMonthlyExpense();
+  const daily = monthly > 0 ? monthly / 30 : 0;
+  const days = daily > 0 ? liquid / daily : (liquid > 0 ? Infinity : 0);
+  return { liquid, monthly, daily, days };
+}
+function daysSinceLastTx() {
+  if (!DB.transactions.length) return Infinity;
+  const last = DB.transactions.reduce((m, t) => Math.max(m, new Date(t.date).getTime()), 0);
+  return Math.floor((Date.now() - last) / 86400000);
+}
+function trackingStreak() {
+  if (!DB.transactions.length) return 0;
+  const days = new Set(DB.transactions.map(t => dateInputValue(t.date)));
+  let streak = 0, d = new Date();
+  for (let i = 0; i < 120; i++) {
+    if (days.has(dateInputValue(d.toISOString()))) streak++;
+    else if (i > 0) break;            // permite que "hoy" aún no tenga registro
+    d.setDate(d.getDate() - 1);
+  }
+  return streak;
+}
+function debtAnnualRate(d) { return d.rate ? (d.ratePeriod === "mensual" ? d.rate * 12 : d.rate) : 0; }
+/* Obligación mensual aproximada de tus deudas (cuota, o al menos el interés). */
+function monthlyDebtLoad() {
+  return DB.debts.filter(d => d.dir === "owe" && debtBalance(d) > 0)
+    .reduce((s, d) => s + (d.monthly > 0 ? d.monthly : debtMonthlyInterest(d)), 0);
+}
+function hasFinData() { return DB.accounts.length > 0 || DB.transactions.length > 0 || DB.debts.length > 0; }
+/* Cinco pilares, cada uno 0-100, con curvas que premian los primeros pasos. */
+function healthPillars() {
+  // Al día: penaliza solo lo vencido, no lo por venir.
+  const vencidas = DB.debts.filter(d => debtStatus(d) === "vencida").length;
+  const alDia = vencidas === 0 ? 100 : Math.max(15, 100 - vencidas * 35);
+  // Colchón: curva raíz → 1 semana ya suma, 3 meses = tope.
+  const cd = cushion().days;
+  const colchon = cd === Infinity ? 100 : Math.min(100, Math.round(100 * Math.sqrt(Math.min(cd, 90) / 90)));
+  // Vives con lo tuyo: empatar ya vale ~45; ahorrar 20% = tope.
+  const inc = avgOf("income"), exp = avgOf("expense");
+  const sr = inc > 0 ? (inc - exp) / inc * 100 : (exp > 0 ? -100 : 0);
+  let medios;
+  if (sr >= 20) medios = 100;
+  else if (sr >= 0) medios = Math.round(45 + sr / 20 * 55);
+  else medios = Math.max(5, Math.round(45 + sr / 20 * 40));
+  // Peso de la deuda: obligación mensual vs ingreso.
+  const load = monthlyDebtLoad();
+  let deuda;
+  if (load <= 0) deuda = 100;
+  else if (inc > 0) deuda = Math.max(10, Math.min(100, Math.round(100 - (load / inc) * 150)));
+  else deuda = 40;
+  // Constancia: premia aparecer (lo único que sí controla hoy).
+  const dsl = daysSinceLastTx();
+  const constancia = !DB.transactions.length ? 0 : dsl <= 0 ? 100 : dsl <= 1 ? 85 : dsl <= 3 ? 70 : dsl <= 6 ? 50 : dsl <= 13 ? 30 : 15;
+  return { alDia, colchon, medios, deuda, constancia };
+}
+function healthScore() {
+  if (!hasFinData()) return null;
+  const p = healthPillars();
+  return Math.round(p.alDia * 0.25 + p.colchon * 0.25 + p.medios * 0.20 + p.deuda * 0.15 + p.constancia * 0.15);
+}
+function healthLevel(score) {
+  if (score == null) return { name: "Empecemos", tint: "var(--label-2)" };
+  if (score <= 20) return { name: "Arrancando", tint: "var(--red)" };
+  if (score <= 40) return { name: "Tomando control", tint: "var(--amber)" };
+  if (score <= 60) return { name: "Estabilizando", tint: "var(--amber)" };
+  if (score <= 80) return { name: "Con base sólida", tint: "var(--green)" };
+  return { name: "Rumbo a la libertad", tint: "var(--green)" };
+}
+/* Próximo pago: lo más cercano entre deudas con fecha y fijos del mes. */
+function nextDue() {
+  const items = [];
+  const todayKey = todayKeyStr();
+  DB.debts.filter(d => d.dir === "owe" && debtBalance(d) > 0 && d.dueDate).forEach(d => {
+    items.push({ key: dateInputValue(d.dueDate), name: d.name, amount: d.monthly > 0 ? d.monthly : debtBalance(d), kind: "debt", id: d.id });
+  });
+  DB.recurring.filter(r => r.type === "expense").forEach(r => {
+    const now = new Date(); let due = new Date(now.getFullYear(), now.getMonth(), Math.min(r.day, daysInMonth(monthKeyOf(now))), 12);
+    if (dateInputValue(due.toISOString()) < todayKey) due = new Date(now.getFullYear(), now.getMonth() + 1, Math.min(r.day, 28), 12);
+    items.push({ key: dateInputValue(due.toISOString()), name: r.note || r.category, amount: r.amount, kind: "fixed", id: r.id });
+  });
+  if (!items.length) return null;
+  items.sort((a, b) => a.key < b.key ? -1 : 1);
+  const it = items[0];
+  it.daysAway = Math.round((new Date(it.key + "T12:00:00") - new Date(todayKey + "T12:00:00")) / 86400000);
+  return it;
+}
+/* El ÚNICO próximo paso: el más urgente y alcanzable. */
+function nextStep() {
+  const overdue = DB.debts.filter(d => d.dir === "owe" && debtStatus(d) === "vencida");
+  if (overdue.length) return { text: `Ponte al día con ${overdue[0].name}. Es lo que más te está costando.`, cta: "Ver deuda", act: "debts" };
+  const t = monthTotals(viewMonth);
+  if (t.income > 0 && t.balance < 0) {
+    const top = categoryBreakdown(viewMonth, "expense")[0];
+    return { text: `Este mes vas gastando más de lo que entra${top ? `. Mirá tu gasto en ${top.name}` : ""}.`, cta: "Ver gastos", act: "reports" };
+  }
+  const cd = cushion();
+  if (cd.days < 7) return { text: "Guardá ₡5.000 esta semana. Sería tu primer colchón. 💪", cta: "Crear colchón", act: "save" };
+  const pricey = DB.debts.filter(d => d.dir === "owe" && debtBalance(d) > 0 && debtAnnualRate(d) >= 30)
+    .sort((a, b) => debtAnnualRate(b) - debtAnnualRate(a))[0];
+  if (pricey) return { text: `El préstamo de ${pricey.name} te cuesta ~${Math.round(debtAnnualRate(pricey))}% al año. Priorizá pagarlo.`, cta: "Ver deuda", act: "debts" };
+  if (daysSinceLastTx() > 2) return { text: "Registrá lo de hoy. Son 10 segundos y mantiene todo al día.", cta: "Registrar", act: "expense" };
+  if (cd.days < 90) return { text: "Vas bien. Subí un poco más tu colchón cuando puedas.", cta: "Ahorrar", act: "save" };
+  return { text: "Excelente manejo. Mantené el ritmo. 🌱", cta: null, act: null };
+}
+function todayWin() {
+  const streak = trackingStreak();
+  if (streak >= 2) return `🔥 Llevás ${streak} días registrando seguidos`;
+  if (registeredToday()) return "✓ Ya registraste hoy";
+  return null;
+}
+
 /* ---- Perfil financiero (para el simulador de compra) ---- */
 function avgOf(field, nBack = 6) {
   const vals = [];
@@ -555,8 +685,9 @@ SCREENS.home = () => {
 
   if (!DB.transactions.length && !DB.accounts.length && !DB.goals.length) return homeWelcome();
   return `
-    <div class="head"><h1>Resumen</h1><p>Tus finanzas de un vistazo.</p></div>
+    <div class="head"><h1>${greeting()} 👋</h1><p>Vamos paso a paso.</p></div>
     ${accountsExist() ? networthBannerHTML() : ""}
+    ${momentoHTML()}
 
     <div class="section-title">Este mes</div>
     ${monthNav()}
@@ -566,12 +697,6 @@ SCREENS.home = () => {
       <div class="rem-ic">🔔</div>
       <div class="rem-txt"><strong>Aún no registras movimientos hoy</strong><span>Un toque para mantener tus finanzas al día.</span></div>
       <button class="rem-x" id="rem-dismiss" aria-label="Descartar">✕</button>
-    </div>` : ""}
-
-    ${upcomingDebts().length ? `
-    <div class="reminder" id="debt-rem">
-      <div class="rem-ic">💸</div>
-      <div class="rem-txt"><strong>${upcomingDebts().length} pago${upcomingDebts().length > 1 ? "s" : ""} por vencer o vencido${upcomingDebts().length > 1 ? "s" : ""}</strong><span>Toca para ver tus deudas y préstamos.</span></div>
     </div>` : ""}
 
     <div class="hero">
@@ -649,6 +774,74 @@ function homeWelcome() {
     <div class="hint center">También puedes explorar las pestañas de abajo: Movimientos, Reportes y Ajustes.</div>
   `;
 }
+function greeting() { const h = new Date().getHours(); return h < 12 ? "Buenos días" : h < 19 ? "Buenas tardes" : "Buenas noches"; }
+function cushionLine(cd) {
+  if (cd.days === Infinity) return "Tu colchón cubre tus gastos de sobra.";
+  if (cd.days <= 0) return "Aún no tienes colchón. Empieza con poco.";
+  if (cd.days >= 60) return `Tu colchón cubre ~${Math.round(cd.days / 30)} meses de gastos.`;
+  return `Tu colchón cubre ${Math.round(cd.days)} día${Math.round(cd.days) === 1 ? "" : "s"} de gastos.`;
+}
+function dueLabel(daysAway) {
+  if (daysAway < 0) return `Vencido hace ${Math.abs(daysAway)} día${Math.abs(daysAway) === 1 ? "" : "s"}`;
+  if (daysAway === 0) return "Vence hoy";
+  if (daysAway === 1) return "Vence mañana";
+  return `Vence en ${daysAway} días`;
+}
+function momentoHTML() {
+  if (!hasFinData()) return "";
+  const score = healthScore(), lvl = healthLevel(score), cd = cushion();
+  const due = nextDue(), step = nextStep(), win = todayWin();
+  return `
+    <div class="section-title">Tu momento</div>
+    <div class="card momento">
+      ${due ? `<div class="mo-due ${due.daysAway <= 3 ? "urgent" : ""}">
+        <span class="mo-due-ic">${due.daysAway < 0 ? "⚠️" : "⏰"}</span>
+        <div class="grow"><div class="mo-due-t">${dueLabel(due.daysAway)}</div><div class="mo-due-s">${esc(due.name)}</div></div>
+        <div class="mo-due-amt">${fmt(due.amount)}</div>
+      </div>` : `<div class="mo-due ok">
+        <span class="mo-due-ic">✓</span>
+        <div class="grow"><div class="mo-due-t">Nada vence esta semana</div><div class="mo-due-s">Vas al día con tus pagos</div></div>
+      </div>`}
+      ${score != null ? `<button class="mo-health" id="mo-health">
+        <div class="grow"><div class="mo-h-lvl" style="color:${lvl.tint}">${lvl.name}</div><div class="mo-h-sub">${cushionLine(cd)}</div></div>
+        <div class="mo-h-score"><b>${score}</b><span>/100</span></div>
+        <span class="mo-h-chev">›</span>
+      </button>` : ""}
+      ${step ? `<div class="mo-step">
+        <div class="mo-step-txt">${step.text}</div>
+        ${step.cta ? `<button class="btn small" id="mo-step-cta" data-act="${step.act || ""}">${step.cta}</button>` : ""}
+      </div>` : ""}
+      ${win ? `<div class="mo-win">${win}</div>` : ""}
+    </div>`;
+}
+function openHealth() {
+  const score = healthScore(), lvl = healthLevel(score), p = healthPillars(), cd = cushion(), step = nextStep();
+  const bar = (label, val, hint) => `
+    <div class="bud">
+      <div class="bud-top"><span>${label}</span><span>${val}/100</span></div>
+      <div class="kpi-bar"><i style="width:${val}%"></i></div>
+      <div class="hint" style="margin-top:5px">${hint}</div>
+    </div>`;
+  const inc = avgOf("income"), load = monthlyDebtLoad();
+  openSheet(`
+    <div class="toolbar"><h2 style="margin:0">Tu salud financiera</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="card center">
+      <div class="mo-h-score big"><b style="color:${lvl.tint}">${score}</b><span>/100</span></div>
+      <div class="mo-h-lvl big" style="color:${lvl.tint}">${lvl.name}</div>
+      <div class="hint">No es una nota: es tu punto de partida. Cada paso pequeño la sube.</div>
+    </div>
+    ${step ? `<div class="card"><div class="section-title" style="margin:0 0 10px">Tu próximo paso</div><div class="mo-step-txt">${step.text}</div></div>` : ""}
+    <div class="card">
+      <div class="section-title" style="margin:0 0 12px">Qué la compone</div>
+      ${bar("Al día con lo que debes", p.alDia, DB.debts.some(d => debtStatus(d) === "vencida") ? "Tienes pagos vencidos. Ponerte al día es lo que más sube." : "No tienes pagos vencidos. 👏")}
+      ${bar("Colchón de emergencia", p.colchon, cushionLine(cd))}
+      ${bar("Vives con lo tuyo", p.medios, "Gastar menos de lo que entra. Empatar ya cuenta.")}
+      ${bar("Peso de la deuda", p.deuda, load > 0 ? `Tus deudas piden ~${fmt(load)}/mes${inc > 0 ? ` (${Math.round(load / inc * 100)}% de tu ingreso)` : ""}.` : "No tienes deudas activas. 🙌")}
+      ${bar("Constancia", p.constancia, "Registrar seguido. Es lo que sí controlas hoy.")}
+    </div>
+    <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cerrar</button>
+  `, { fullscreen: true });
+}
 WIRE.home = (root) => {
   const wa = $("#w-account", root);
   if (wa) { wa.onclick = openAccounts; $("#w-expense", root).onclick = () => openTx("expense"); return; }
@@ -666,8 +859,18 @@ WIRE.home = (root) => {
   $("#h-all", root).onclick = () => { currentTab = "money"; render(); };
   const hg = $("#h-goals", root); if (hg) hg.onclick = openGoals;
   const hd = $("#h-debts", root); if (hd) hd.onclick = openDebts;
-  const dr = $("#debt-rem", root); if (dr) dr.onclick = openDebts;
   const nwm = $("#nw-manage", root); if (nwm) nwm.onclick = openAccounts;
+  const moH = $("#mo-health", root); if (moH) moH.onclick = openHealth;
+  const moStep = $("#mo-step-cta", root);
+  if (moStep) moStep.onclick = () => {
+    const act = moStep.dataset.act;
+    if (act === "debts") openDebts();
+    else if (act === "expense") openTx("expense");
+    else if (act === "save") openGoals();
+    else if (act === "reports") { currentTab = "reports"; render(); }
+  };
+  const moDue = $(".mo-due.urgent, .mo-due:not(.ok)", root);
+  if (moDue) moDue.onclick = () => { if (DB.debts.some(d => d.dueDate)) openDebts(); };
   $("#h-sim", root).onclick = openSimulator;
   wireTxRows(root);
 };

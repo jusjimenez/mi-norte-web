@@ -102,6 +102,31 @@ input, textarea, select { -webkit-user-select: text; user-select: text; }
 .hub-s { font-size: 12.5px; color: var(--label-2); margin-top: 2px; }
 .hub-chev { flex: none; color: var(--label-2); font-size: 22px; line-height: 1; font-weight: 400; }
 
+/* Tu momento (inicio) — el ancla emocional/accionable */
+.card.momento { padding: 0; overflow: hidden; }
+.momento > * + * { border-top: 1px solid var(--sep); }
+.mo-due, .mo-health, .mo-step { display: flex; align-items: center; gap: 12px; padding: 14px 15px; }
+.mo-due-ic { font-size: 19px; flex: none; }
+.mo-due-t { font-size: 14.5px; font-weight: 700; }
+.mo-due-s { font-size: 12.5px; color: var(--label-2); margin-top: 1px; }
+.mo-due-amt { font-weight: 800; font-variant-numeric: tabular-nums; }
+.mo-due.urgent .mo-due-t { color: var(--amber); }
+.mo-due.ok .mo-due-t { color: var(--green); }
+.mo-health { width: 100%; background: none; border: none; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.mo-health:active { background: var(--card-press); }
+.mo-h-lvl { font-size: 16px; font-weight: 800; letter-spacing: -0.01em; }
+.mo-h-sub { font-size: 12.5px; color: var(--label-2); margin-top: 2px; }
+.mo-h-score { flex: none; font-variant-numeric: tabular-nums; }
+.mo-h-score b { font-size: 23px; font-weight: 800; }
+.mo-h-score span { font-size: 12.5px; color: var(--label-2); }
+.mo-h-chev { flex: none; color: var(--label-2); font-size: 22px; line-height: 1; }
+.mo-h-score.big { display: block; }
+.mo-h-score.big b { font-size: 46px; }
+.mo-h-score.big span { font-size: 17px; }
+.mo-h-lvl.big { font-size: 20px; margin: 2px 0 8px; }
+.mo-step-txt { flex: 1; font-size: 14px; line-height: 1.35; }
+.mo-win { padding: 11px 15px; font-size: 13px; color: var(--label-2); background: var(--fill-2); text-align: center; }
+
 /* Proyección de pago de deudas */
 .proj { margin-top: 10px; background: var(--card-2); border: 1px solid var(--card-border);
   border-radius: 12px; padding: 4px 12px; }
