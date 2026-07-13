@@ -98,24 +98,80 @@ let viewMonth = monthKeyOf(new Date());   // "YYYY-MM" en foco
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
 function load() {
+  const raw = localStorage.getItem(STORE_KEY);
   try {
-    const raw = localStorage.getItem(STORE_KEY);
     if (raw) return normalize(JSON.parse(raw));
     const old = localStorage.getItem(OLD_KEY);
     if (old) return migrateV1(JSON.parse(old));
-  } catch (e) {}
+  } catch (e) {
+    // Datos corruptos: se preservan aparte antes de arrancar vacío, para que un
+    // save() posterior no pise lo que quizá aún se pueda rescatar a mano.
+    try { if (raw) localStorage.setItem(STORE_KEY + "_corrupt", raw); } catch (e2) {}
+  }
   return structuredClone(SEED);
 }
+/* Coerciones defensivas: un respaldo importado (o editado a mano) no debe poder
+   corromper los cálculos. Montos → número finito ≥ 0; fechas → ISO válida;
+   strings → string. Nada de esto altera datos ya sanos. */
+/* Declaradas como function (no const) porque normalize() corre en el arranque,
+   antes de que un const de este punto del archivo esté inicializado. */
+function num(v) { const n = +v; return Number.isFinite(n) ? n : 0; }
+function pos(v) { return Math.max(0, num(v)); }
+function str(v) { return v == null ? "" : String(v); }
+function isoOr(v, fallback) { const d = new Date(v); return isNaN(d) ? fallback : d.toISOString(); }
 function normalize(data) {
   const db = Object.assign(structuredClone(SEED), data || {});
   db.categories = Object.assign(structuredClone(DEFAULT_CATEGORIES), db.categories || {});
+  db.categories.expense = (Array.isArray(db.categories.expense) ? db.categories.expense : DEFAULT_CATEGORIES.expense).map(str).filter(Boolean);
+  db.categories.income = (Array.isArray(db.categories.income) ? db.categories.income : DEFAULT_CATEGORIES.income).map(str).filter(Boolean);
+  if (!db.categories.expense.length) db.categories.expense = [...DEFAULT_CATEGORIES.expense];
+  if (!db.categories.income.length) db.categories.income = [...DEFAULT_CATEGORIES.income];
   db.settings = Object.assign(structuredClone(SEED.settings), db.settings || {});
-  db.transactions = Array.isArray(db.transactions) ? db.transactions : [];
-  db.recurring = Array.isArray(db.recurring) ? db.recurring : [];
-  db.accounts = Array.isArray(db.accounts) ? db.accounts : [];
-  db.goals = Array.isArray(db.goals) ? db.goals : [];
-  db.debts = Array.isArray(db.debts) ? db.debts : [];
-  db.budgets = db.budgets && typeof db.budgets === "object" ? db.budgets : {};
+  db.transactions = (Array.isArray(db.transactions) ? db.transactions : [])
+    .filter(t => t && typeof t === "object")
+    .map(t => ({
+      id: str(t.id) || uid(),
+      date: isoOr(t.date, new Date().toISOString()),
+      type: ["income", "expense", "transfer"].includes(t.type) ? t.type : "expense",
+      amount: pos(t.amount),
+      category: str(t.category), note: str(t.note), ref: str(t.ref),
+      account: t.account ? str(t.account) : undefined,
+      from: t.from ? str(t.from) : undefined, to: t.to ? str(t.to) : undefined,
+    }));
+  db.recurring = (Array.isArray(db.recurring) ? db.recurring : [])
+    .filter(r => r && typeof r === "object")
+    .map(r => ({
+      id: str(r.id) || uid(),
+      type: r.type === "income" ? "income" : "expense",
+      amount: pos(r.amount), category: str(r.category), note: str(r.note),
+      day: Math.max(1, Math.min(31, Math.round(num(r.day)) || 1)),
+      account: r.account ? str(r.account) : undefined,
+      auto: !!r.auto, lastPosted: str(r.lastPosted),
+    }));
+  db.accounts = (Array.isArray(db.accounts) ? db.accounts : [])
+    .filter(a => a && typeof a === "object")
+    .map(a => ({ id: str(a.id) || uid(), name: str(a.name) || "Cuenta",
+      kind: ACCOUNT_KINDS.includes(a.kind) ? a.kind : "otro", opening: num(a.opening) }));
+  db.goals = (Array.isArray(db.goals) ? db.goals : [])
+    .filter(g => g && typeof g === "object")
+    .map(g => ({ id: str(g.id) || uid(), name: str(g.name) || "Meta", kind: str(g.kind) || "ahorro",
+      target: pos(g.target), saved: pos(g.saved),
+      targetDate: g.targetDate ? isoOr(g.targetDate, "") : "", createdAt: g.createdAt ? isoOr(g.createdAt, "") : "" }));
+  db.debts = (Array.isArray(db.debts) ? db.debts : [])
+    .filter(d => d && typeof d === "object")
+    .map(d => ({ id: str(d.id) || uid(), name: str(d.name) || "Deuda", party: str(d.party),
+      dir: d.dir === "owed" ? "owed" : "owe", principal: pos(d.principal),
+      rate: pos(d.rate), ratePeriod: d.ratePeriod === "mensual" ? "mensual" : "anual",
+      monthly: pos(d.monthly), dueDate: d.dueDate ? isoOr(d.dueDate, "") : "",
+      note: str(d.note), createdAt: d.createdAt ? isoOr(d.createdAt, "") : "",
+      payments: (Array.isArray(d.payments) ? d.payments : []).filter(p => p && typeof p === "object")
+        .map(p => ({ id: str(p.id) || uid(), date: isoOr(p.date, new Date().toISOString()), amount: pos(p.amount),
+          interest: p.interest != null ? pos(p.interest) : undefined,
+          capital: p.capital != null ? pos(p.capital) : undefined,
+          account: p.account ? str(p.account) : undefined, txId: p.txId ? str(p.txId) : undefined })) }));
+  const rawBudgets = db.budgets && typeof db.budgets === "object" ? db.budgets : {};
+  db.budgets = {};
+  Object.entries(rawBudgets).forEach(([k, v]) => { const n = pos(v); if (n > 0) db.budgets[str(k)] = n; });
   // Migra las metas antiguas de tipo "deuda" al nuevo módulo de deudas
   const deudaGoals = db.goals.filter(g => g.kind === "deuda");
   deudaGoals.forEach(g => db.debts.push({
@@ -140,7 +196,10 @@ function migrateV1(old) {
   });
   return db;
 }
-function save() { localStorage.setItem(STORE_KEY, JSON.stringify(DB)); }
+function save() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(DB)); }
+  catch (e) { toast("⚠️ No pude guardar: almacenamiento lleno. Exporta un respaldo."); }
+}
 
 /* ---------- Helpers de formato ---------- */
 /* Decimales prácticos por moneda para el modo "Automático" */
@@ -366,8 +425,8 @@ function monthlyDebtLoad() {
 function hasFinData() { return DB.accounts.length > 0 || DB.transactions.length > 0 || DB.debts.length > 0; }
 /* Cinco pilares, cada uno 0-100, con curvas que premian los primeros pasos. */
 function healthPillars() {
-  // Al día: penaliza solo lo vencido, no lo por venir.
-  const vencidas = DB.debts.filter(d => debtStatus(d) === "vencida").length;
+  // Al día: penaliza solo TUS pagos vencidos (no lo que otros te deben a ti).
+  const vencidas = DB.debts.filter(d => d.dir === "owe" && debtStatus(d) === "vencida").length;
   const alDia = vencidas === 0 ? 100 : Math.max(15, 100 - vencidas * 35);
   // Colchón: curva raíz → 1 semana ya suma, 3 meses = tope.
   const cd = cushion().days;
@@ -463,17 +522,17 @@ function nextDue() { return upcomingItems(60)[0] || null; }
 /* El ÚNICO próximo paso: el más urgente y alcanzable. */
 function nextStep() {
   const overdue = DB.debts.filter(d => d.dir === "owe" && debtStatus(d) === "vencida");
-  if (overdue.length) return { text: `Ponte al día con ${overdue[0].name}. Es lo que más te está costando.`, cta: "Ver deuda", act: "debts" };
+  if (overdue.length) return { text: `Ponte al día con ${esc(overdue[0].name)}. Es lo que más te está costando.`, cta: "Ver deuda", act: "debts" };
   const t = monthTotals(viewMonth);
   if (t.income > 0 && t.balance < 0) {
     const top = categoryBreakdown(viewMonth, "expense")[0];
-    return { text: `Este mes vas gastando más de lo que entra${top ? `. Mirá tu gasto en ${top.name}` : ""}.`, cta: "Ver gastos", act: "reports" };
+    return { text: `Este mes vas gastando más de lo que entra${top ? `. Mirá tu gasto en ${esc(top.name)}` : ""}.`, cta: "Ver gastos", act: "reports" };
   }
   const cd = cushion();
   if (cd.days < 7) return { text: "Guardá ₡5.000 esta semana. Sería tu primer colchón. 💪", cta: "Crear colchón", act: "save" };
   const pricey = DB.debts.filter(d => d.dir === "owe" && debtBalance(d) > 0 && debtAnnualRate(d) >= 30)
     .sort((a, b) => debtAnnualRate(b) - debtAnnualRate(a))[0];
-  if (pricey) return { text: `El préstamo de ${pricey.name} te cuesta ~${Math.round(debtAnnualRate(pricey))}% al año. Priorizá pagarlo.`, cta: "Ver deuda", act: "debts" };
+  if (pricey) return { text: `El préstamo de ${esc(pricey.name)} te cuesta ~${Math.round(debtAnnualRate(pricey))}% al año. Priorizá pagarlo.`, cta: "Ver deuda", act: "debts" };
   if (daysSinceLastTx() > 2) return { text: "Registrá lo de hoy. Son 10 segundos y mantiene todo al día.", cta: "Registrar", act: "expense" };
   if (cd.days < 90) return { text: "Vas bien. Subí un poco más tu colchón cuando puedas.", cta: "Ahorrar", act: "save" };
   return { text: "Excelente manejo. Mantené el ritmo. 🌱", cta: null, act: null };
@@ -2122,6 +2181,13 @@ function openDebtPayment(id, payId) {
         DB.transactions.push({ id: txId, date, type: d.dir === "owe" ? "expense" : "income", amount: amt, category: "Deudas", note, account: sel.account });
       }
       d.payments.push({ id: uid(), date, amount: amt, interest, capital, account: sel.link ? sel.account : undefined, txId });
+      // Con el pago hecho, la fecha de pago avanza al mes siguiente: sin esto la
+      // deuda quedaría marcada "vencida" justo después de pagar.
+      if (d.dueDate && debtBalance(d) > 0) {
+        const due = new Date(d.dueDate);
+        const next = new Date(due.getFullYear(), due.getMonth() + 1, Math.min(due.getDate(), new Date(due.getFullYear(), due.getMonth() + 2, 0).getDate()), 12);
+        d.dueDate = next.toISOString();
+      }
     }
     save(); closeSheet(); openDebts(); toast(editing ? "Pago actualizado" : "Registrado");
   };
@@ -2276,7 +2342,13 @@ function downloadBlob(blob, name) {
 function exportCSV(rows, name) {
   if (!rows.length) return toast("No hay datos para exportar");
   const head = ["Fecha", "Hora", "Tipo", "Categoría", "Descripción", "Cuenta", "Comprobante", "Monto"];
-  const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const cell = (v) => {
+    let s = String(v ?? "");
+    // Neutraliza inyección de fórmulas: un texto que empiece con = + - @ se
+    // ejecutaría como fórmula al abrir el CSV en Excel/Sheets.
+    if (typeof v !== "number" && /^[=+\-@]/.test(s)) s = "'" + s;
+    return `"${s.replace(/"/g, '""')}"`;
+  };
   const lines = [head.join(",")];
   rows.forEach(t => {
     const tipo = t.type === "income" ? "Ingreso" : t.type === "transfer" ? "Transferencia" : "Gasto";
@@ -2328,7 +2400,7 @@ function openEncryptedExport() {
   `);
   $("#ee-save").onclick = async () => {
     const a = $("#ee-a").value, b = $("#ee-b").value;
-    if (a.length < 4) return toast("Usa al menos 4 caracteres");
+    if (a.length < 8) return toast("Usa al menos 8 caracteres");
     if (a !== b) return toast("Las contraseñas no coinciden");
     try {
       const payload = await encryptBackup(DB, a);
@@ -2933,6 +3005,10 @@ document.addEventListener("click", (e) => {
   const h = e.target.closest("[data-help]");
   if (h) { e.stopPropagation(); openHelp(h.dataset.help); }
 });
+/* Pide al navegador que trate este almacenamiento como persistente (reduce la
+   probabilidad de que iOS/Android lo purguen bajo presión de espacio). */
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+
 maybeApplyRecurring();
 render();
 showLock();
