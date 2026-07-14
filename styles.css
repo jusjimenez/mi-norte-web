@@ -10,7 +10,7 @@
   --card: #14171e;
   --card-2: #1b1f28;
   --card-press: #20252f;
-  --card-border: rgba(255,255,255,.06);
+  --card-border: rgba(255,255,255,.045);
   --elev: rgba(17,20,27,.72);
 
   /* Texto */
@@ -111,7 +111,8 @@ input, textarea, select { -webkit-user-select: text; user-select: text; }
 
 /* Hub de herramientas (pestaña Más) */
 .hub { background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius);
-  overflow: hidden; margin-bottom: 6px; }
+  overflow: hidden; margin-bottom: 6px;
+  box-shadow: 0 1px 0 rgba(255,255,255,.02) inset, 0 8px 24px -20px rgba(0,0,0,.9); }
 .hub-row { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
   background: none; border: none; border-bottom: 1px solid var(--sep); color: var(--label);
   font: inherit; padding: 15px 15px; cursor: pointer; }
@@ -123,7 +124,10 @@ input, textarea, select { -webkit-user-select: text; user-select: text; }
 .hub-chev { flex: none; color: var(--label-2); font-size: 22px; line-height: 1; font-weight: 400; }
 
 /* Tu momento (inicio) — el ancla emocional/accionable */
-.card.momento { padding: 0; overflow: hidden; }
+.card.momento { padding: 0; overflow: hidden; position: relative;
+  background:
+    radial-gradient(120% 80% at 0% 0%, rgba(45,212,191,.06), transparent 60%),
+    var(--card); }
 .momento > * + * { border-top: 1px solid var(--sep); }
 .mo-due, .mo-health, .mo-step { display: flex; align-items: center; gap: 12px; padding: 14px 15px; }
 .mo-due-ic { font-size: 19px; flex: none; }
@@ -293,7 +297,8 @@ button.mo-hero:active { background: var(--card-press); }
 .spark-cap .v { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* ----- Tarjetas ----- */
-.card { background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+.card { background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px;
+  box-shadow: 0 1px 0 rgba(255,255,255,.02) inset, 0 8px 24px -20px rgba(0,0,0,.9); }
 .card h2 { font-size: 15px; font-weight: 700; margin: 0 0 12px; letter-spacing: -0.01em; }
 .card .label, .label { font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--label-2); font-weight: 700; margin-bottom: 10px; }
 .muted { color: var(--label-2); font-size: 15px; }
