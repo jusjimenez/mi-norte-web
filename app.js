@@ -3,8 +3,51 @@
    Datos 100% locales (localStorage) + respaldo JSON/CSV.
    =========================================================== */
 
-const STORE_KEY = "mi_norte_data_v2";
-const OLD_KEY   = "mi_norte_data_v1";
+/* Versión ESENCIAL: sandbox propio para no mezclarse con la versión completa. */
+const STORE_KEY = "mi_norte_esencial";
+const OLD_KEY   = "mi_norte_data_v2";
+
+/* Funciones que empiezan apagadas y se abren por relevancia o a mano.
+   El motor de todas ya existe: esto solo controla qué se muestra y cuándo. */
+const FEATURE_META = {
+  categorias:   { name: "Categorías",           desc: "Separá tus gastos por tipo",              icon: "🏷️" },
+  presupuestos: { name: "Presupuestos",         desc: "Límites por categoría, con alertas",      icon: "🎯" },
+  deudas:       { name: "Deudas y préstamos",    desc: "Saldos, intereses y recordatorios de pago", icon: "💸" },
+  fijos:        { name: "Movimientos fijos",     desc: "Ingresos y gastos que se repiten cada mes", icon: "🔁" },
+  proximos:     { name: "Próximos pagos",        desc: "Lo que se te viene, en un calendario",    icon: "📅" },
+  metas:        { name: "Metas de ahorro",       desc: "Objetivos con fecha y cuota mensual",     icon: "🌱" },
+  salud:        { name: "Salud financiera",      desc: "Tu progreso en un solo número",           icon: "❤️" },
+  reportes:     { name: "Reportes",              desc: "Gráficas y análisis por mes, año o rango", icon: "📊" },
+  conciliacion: { name: "Conciliación bancaria", desc: "Comparar con el CSV de tu banco",         icon: "🏦" },
+};
+const OPTIONAL_FEATURES = Object.keys(FEATURE_META);
+function feat(key) { return !!(DB.settings.features && DB.settings.features[key]); }
+function activateFeature(key, silent) {
+  DB.settings.features = DB.settings.features || {};
+  if (DB.settings.features[key]) return false;
+  DB.settings.features[key] = true; save();
+  if (!silent && FEATURE_META[key]) toast(`✨ ${FEATURE_META[key].name} activado`);
+  return true;
+}
+function deactivateFeature(key) { if (DB.settings.features) { DB.settings.features[key] = false; save(); } }
+/* Sugerencia por RELEVANCIA: ofrece la siguiente función solo cuando ya te
+   sirve, nunca por "puntos". Devuelve una a la vez, y respeta lo descartado. */
+function suggestFeature() {
+  const f = DB.settings.features || {}, dis = DB.settings.dismissedSug || {};
+  const cand = [];
+  if (!f.deudas && DB.transactions.some(t => t.category === "Deudas"))
+    cand.push({ key: "deudas", text: "Veo un movimiento de deudas. ¿Te llevo el saldo, los intereses y las fechas de pago?" });
+  if (!f.categorias && DB.transactions.filter(t => t.type === "expense").length >= 5)
+    cand.push({ key: "categorias", text: "Ya llevas varios gastos. ¿Los separamos por categoría para ver a dónde se va la plata?" });
+  if (!f.fijos && DB.transactions.filter(t => t.type === "expense").length >= 6)
+    cand.push({ key: "fijos", text: "¿Hay pagos que se repiten cada mes (alquiler, luz)? Puedo anotarlos solos." });
+  if (!f.salud && DB.transactions.length >= 8)
+    cand.push({ key: "salud", text: "Ya tengo historial suficiente. ¿Te muestro tu salud financiera en un número?" });
+  if (!f.metas && DB.transactions.length >= 10)
+    cand.push({ key: "metas", text: "Vas tomando el ritmo. ¿Ponemos una meta de ahorro chica para empezar?" });
+  return cand.find(c => !dis[c.key]) || null;
+}
+function dismissSuggestion(key) { DB.settings.dismissedSug = DB.settings.dismissedSug || {}; DB.settings.dismissedSug[key] = true; save(); }
 
 /* ---------- Catálogos por defecto ---------- */
 const DEFAULT_CATEGORIES = {
@@ -36,7 +79,7 @@ const SEED = {
   accounts: [],       // {id, name, kind:'efectivo'|'banco'|'tarjeta'|'otro', opening}
   goals: [],          // {id, name, kind:'ahorro', target, saved}
   debts: [],          // {id, name, party, dir:'owe'|'owed', principal, rate, ratePeriod, dueDate, note, createdAt, payments:[{id,date,amount,account}]}
-  settings: { currency: "CRC", locale: "es-CR", decimals: "auto", savingsGoal: 20, reminders: true, reminderDismissed: "", gate: true, gateAM: "", gatePM: "", pin: "" },
+  settings: { currency: "CRC", locale: "es-CR", decimals: "auto", savingsGoal: 20, reminders: true, reminderDismissed: "", gate: true, gateAM: "", gatePM: "", pin: "", features: {} },
 };
 
 const ACCOUNT_KINDS = ["efectivo", "banco", "tarjeta", "otro"];
@@ -111,14 +154,25 @@ function load() {
   const raw = localStorage.getItem(STORE_KEY);
   try {
     if (raw) return normalize(JSON.parse(raw));
+    // Primer arranque de Esencial: si hay datos de la versión completa, los
+    // traemos y deducimos qué funciones ya usaba (no le escondemos lo suyo).
     const old = localStorage.getItem(OLD_KEY);
-    if (old) return migrateV1(JSON.parse(old));
+    if (old) { const db = normalize(JSON.parse(old)); db.settings.features = Object.assign(inferFeaturesFrom(db), db.settings.features || {}); return db; }
   } catch (e) {
-    // Datos corruptos: se preservan aparte antes de arrancar vacío, para que un
-    // save() posterior no pise lo que quizá aún se pueda rescatar a mano.
     try { if (raw) localStorage.setItem(STORE_KEY + "_corrupt", raw); } catch (e2) {}
   }
   return structuredClone(SEED);
+}
+/* Igual que inferFeatures pero sobre un DB dado (para la migración en load). */
+function inferFeaturesFrom(db) {
+  const f = {};
+  if (db.debts.length) f.deudas = true;
+  if (db.goals.length) f.metas = true;
+  if (db.recurring.length) { f.fijos = true; f.proximos = true; }
+  if (db.budgets && Object.keys(db.budgets).length) f.presupuestos = true;
+  if (db.transactions.some(t => t.category)) f.categorias = true;
+  if (db.transactions.length >= 8) { f.reportes = true; f.salud = true; }
+  return f;
 }
 /* Coerciones defensivas: un respaldo importado (o editado a mano) no debe poder
    corromper los cálculos. Montos → número finito ≥ 0; fechas → ISO válida;
@@ -775,11 +829,17 @@ function toast(msg) {
    RENDER
    =========================================================== */
 function render() {
+  if (currentTab === "reports" && !feat("reportes")) currentTab = "home";  // pestaña apagada
   const screen = $("#screen");
   screen.innerHTML = SCREENS[currentTab]();
   screen.scrollTop = 0;
   WIRE[currentTab]?.(screen);
   $$(".tab").forEach(b => b.classList.toggle("on", b.dataset.tab === currentTab));
+}
+/* Muestra/oculta pestañas según las funciones activas (hoy solo Reportes). */
+function applyFeatureTabs() {
+  const rt = document.querySelector('.tab[data-tab="reports"]');
+  if (rt) rt.style.display = feat("reportes") ? "" : "none";
 }
 const SCREENS = {};
 const WIRE = {};
@@ -879,6 +939,14 @@ SCREENS.home = () => {
     </div>
     <button class="btn line sim-cta" id="h-sim">🧮 ¿Puedo permitirme una compra?</button>
 
+    ${(() => { const sg = suggestFeature(); return sg ? `
+    <div class="suggest" data-key="${sg.key}">
+      <div class="sug-ic">${FEATURE_META[sg.key].icon}</div>
+      <div class="grow"><div class="sug-t">${sg.text}</div>
+        <div class="sug-actions"><button class="btn small" id="sug-yes">Activar</button><button class="btn small line" id="sug-no">Ahora no</button></div>
+      </div>
+    </div>` : ""; })()}
+
     ${recurringPendings().length ? `
     <div class="reminder" id="pend-rem">
       <div class="rem-ic">🧾</div>
@@ -892,13 +960,13 @@ SCREENS.home = () => {
 
     <div class="section-title">Cómo vas</div>
     <div class="hub">
-      ${score != null ? cvRow("cv-health", lvl.name, `Salud ${score}/100 · ${cushionLine(cd)}`, lvl.tint) : ""}
+      ${feat("salud") && score != null ? cvRow("cv-health", lvl.name, `Salud ${score}/100 · ${cushionLine(cd)}`, lvl.tint) : ""}
       ${cvRow("cv-month", `Este mes ${cur.balance >= 0 ? "+" : "−"}${fmt(Math.abs(cur.balance))}`, `Ahorro ${Math.round(cur.savingsRate)}%${overBudget ? ` · ${overBudget} presupuesto${overBudget > 1 ? "s" : ""} excedido${overBudget > 1 ? "s" : ""}` : ""} · ver detalle`)}
       ${accountsExist() ? cvRow("cv-accounts", `Disponible ${fmt(netWorth())}`, "En todas tus cuentas") : ""}
     </div>
 
-    ${DB.goals.length ? goalsCardHTML() : ""}
-    ${DB.debts.length ? debtsCardHTML() : ""}
+    ${feat("metas") && DB.goals.length ? goalsCardHTML() : ""}
+    ${feat("deudas") && DB.debts.length ? debtsCardHTML() : ""}
 
     <div class="section-title">Actividad</div>
     <div class="card">
@@ -1032,11 +1100,22 @@ WIRE.home = (root) => {
   if (moDue && !moDue.classList.contains("ok")) moDue.style.cursor = "pointer", moDue.onclick = openUpcoming;
   // "Cómo vas"
   const cvH = $("#cv-health", root); if (cvH) cvH.onclick = openHealth;
-  const cvM = $("#cv-month", root); if (cvM) cvM.onclick = () => { currentTab = "reports"; render(); };
+  const cvM = $("#cv-month", root); if (cvM) cvM.onclick = () => { activateFeature("reportes"); applyFeatureTabs(); currentTab = "reports"; render(); };
   const cvA = $("#cv-accounts", root); if (cvA) cvA.onclick = openAccounts;
   // Recordatorios
   const pr = $("#pend-rem", root); if (pr) pr.onclick = openUpcoming;
   const br = $("#backup-rem", root); if (br) br.onclick = () => { currentTab = "settings"; render(); };
+  // Sugerencia por relevancia
+  const sg = $(".suggest", root);
+  if (sg) {
+    const key = sg.dataset.key;
+    $("#sug-yes", root).onclick = () => {
+      activateFeature(key); applyFeatureTabs();
+      const opener = { deudas: openDebts, categorias: () => openCategories("expense"), fijos: openRecurring, metas: openGoals, salud: openHealth };
+      render(); if (opener[key]) opener[key]();
+    };
+    $("#sug-no", root).onclick = () => { dismissSuggestion(key); render(); };
+  }
   wireTxRows(root);
 };
 
@@ -1470,38 +1549,63 @@ WIRE.settings = (root) => {
 /* ---------------- MÁS (hub de herramientas) ---------------- */
 SCREENS.more = () => {
   const row = (id, title, sub) => `<button class="hub-row" id="${id}"><div class="hub-txt"><div class="hub-t">${title}</div><div class="hub-s">${sub}</div></div><span class="hub-chev">›</span></button>`;
+  const featRow = (key) => feat(key) ? row("hub-" + key, `${FEATURE_META[key].icon} ${FEATURE_META[key].name}`, FEATURE_META[key].desc) : "";
+  const planos = ["proximos", "presupuestos", "fijos", "metas", "deudas", "conciliacion"].filter(feat);
+  const nOff = OPTIONAL_FEATURES.filter(k => !feat(k)).length;
   return `
     <div class="head"><h1>Más</h1><p>Tus herramientas de dinero.</p></div>
 
     <div class="section-title">Cuentas y categorías</div>
     <div class="hub">
       ${row("hub-accounts", "Cuentas", "Saldos y transferencias")}
-      ${row("hub-cat-exp", "Categorías de gasto", "Personaliza tus gastos")}
-      ${row("hub-cat-inc", "Categorías de ingreso", "Personaliza tus ingresos")}
+      ${feat("categorias") ? row("hub-cat-exp", "Categorías de gasto", "Personaliza tus gastos") + row("hub-cat-inc", "Categorías de ingreso", "Personaliza tus ingresos") : ""}
     </div>
 
-    <div class="section-title">Planeación</div>
+    ${planos.length ? `<div class="section-title">Planeación</div>
+    <div class="hub">${planos.map(featRow).join("")}</div>` : ""}
+
+    <div class="section-title">Tu app</div>
     <div class="hub">
-      ${row("hub-upcoming", "Próximos pagos", "Lo que se te viene este mes")}
-      ${row("hub-budgets", "Presupuestos", "Límites por categoría")}
-      ${row("hub-recurring", "Movimientos fijos", "Ingresos y gastos que se repiten")}
-      ${row("hub-goals", "Metas de ahorro", "Objetivos con progreso")}
-      ${row("hub-debts", "Deudas y préstamos", "Lo que debes y lo que te deben")}
-      ${row("hub-reconcile", "Conciliación bancaria", "Compara un CSV del banco")}
+      ${row("hub-features", "✨ Activar funciones", nOff ? `${nOff} disponible${nOff > 1 ? "s" : ""} para cuando estés listo` : "Ya tienes todo activado")}
     </div>
   `;
 };
 WIRE.more = (root) => {
   $("#hub-accounts", root).onclick = openAccounts;
-  $("#hub-cat-exp", root).onclick = () => openCategories("expense");
-  $("#hub-cat-inc", root).onclick = () => openCategories("income");
-  $("#hub-upcoming", root).onclick = openUpcoming;
-  $("#hub-budgets", root).onclick = openBudgets;
-  $("#hub-recurring", root).onclick = openRecurring;
-  $("#hub-goals", root).onclick = openGoals;
-  $("#hub-debts", root).onclick = openDebts;
-  $("#hub-reconcile", root).onclick = openReconcile;
+  const ce = $("#hub-cat-exp", root); if (ce) ce.onclick = () => openCategories("expense");
+  const ci = $("#hub-cat-inc", root); if (ci) ci.onclick = () => openCategories("income");
+  const up = $("#hub-proximos", root); if (up) up.onclick = openUpcoming;
+  const bu = $("#hub-presupuestos", root); if (bu) bu.onclick = openBudgets;
+  const re = $("#hub-fijos", root); if (re) re.onclick = openRecurring;
+  const go = $("#hub-metas", root); if (go) go.onclick = openGoals;
+  const de = $("#hub-deudas", root); if (de) de.onclick = openDebts;
+  const co = $("#hub-conciliacion", root); if (co) co.onclick = openReconcile;
+  $("#hub-features", root).onclick = openFeatures;
 };
+/* Pantalla "Activar funciones": nada bloqueado, todo a un toque. */
+function openFeatures() {
+  const draw = () => {
+    const item = (key) => {
+      const on = feat(key), m = FEATURE_META[key];
+      return `<div class="feat-item">
+        <span class="feat-ic">${m.icon}</span>
+        <div class="grow"><div class="t">${m.name}</div><div class="s">${m.desc}</div></div>
+        <label class="switch"><input type="checkbox" data-feat="${key}" ${on ? "checked" : ""} /><span class="sl"></span></label>
+      </div>`;
+    };
+    openSheet(`
+      <div class="toolbar"><h2 style="margin:0">Activar funciones</h2><button class="x" onclick="closeSheet()">✕</button></div>
+      <p class="hint">La app empieza simple para no abrumarte. Enciende lo que quieras cuando lo quieras — y apágalo si te estorba. Nada se borra al apagarlo.</p>
+      <div class="card">${OPTIONAL_FEATURES.map(item).join("")}</div>
+      <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cerrar</button>
+    `, { fullscreen: true });
+    $$("[data-feat]").forEach(chk => chk.onchange = () => {
+      if (chk.checked) activateFeature(chk.dataset.feat, true); else deactivateFeature(chk.dataset.feat);
+      applyFeatureTabs();
+    });
+  };
+  draw();
+}
 
 /* ===========================================================
    HOJAS / MODALES
@@ -3058,6 +3162,7 @@ document.addEventListener("click", (e) => {
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
 maybeApplyRecurring();
+applyFeatureTabs();
 render();
 showLock();
 maybeShowGate();

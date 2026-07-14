@@ -152,6 +152,20 @@ button.mo-hero:active { background: var(--card-press); }
 .cr-n { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px;
   border-radius: 999px; background: var(--tint-soft); color: var(--tint); font-weight: 800; font-size: 14px; }
 
+/* Activar funciones */
+.feat-item { display: flex; align-items: center; gap: 13px; padding: 13px 0; border-bottom: 1px solid var(--sep); }
+.feat-item:last-child { border-bottom: none; }
+.feat-ic { font-size: 22px; flex: none; width: 26px; text-align: center; }
+.feat-item .t { font-size: 15px; font-weight: 600; }
+.feat-item .s { font-size: 12.5px; color: var(--label-2); margin-top: 1px; }
+
+/* Sugerencia por relevancia (empezar simple, abrir cuando sirve) */
+.suggest { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 18px;
+  background: var(--tint-soft); border: 1px solid rgba(45,212,191,.22); border-radius: var(--radius); padding: 14px 15px; }
+.sug-ic { font-size: 22px; flex: none; }
+.sug-t { font-size: 14px; line-height: 1.4; }
+.sug-actions { display: flex; gap: 8px; margin-top: 10px; }
+
 /* Movimientos fijos + próximos pagos */
 .rec-item + .rec-item { border-top: 1px solid var(--sep); margin-top: 6px; padding-top: 8px; }
 .rec-badge { font-size: 10.5px; font-weight: 800; letter-spacing: .02em; color: var(--tint);

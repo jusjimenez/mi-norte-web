@@ -49,7 +49,7 @@ Fecha,Referencia,Descripción,Débito,Crédito,Saldo
   console.log('MORE tab hub-rows:', hubCount, 'radius:', hubRowStyled);
 
   // open Deudas from hub
-  await page.click('#hub-debts');
+  await page.click('#hub-deudas');
   await page.waitForSelector('[data-d-hist]');
   await page.click('[data-d-hist]');
   await page.waitForSelector('[data-p-del]');
@@ -78,7 +78,7 @@ Fecha,Referencia,Descripción,Débito,Crédito,Saldo
   }));
   console.log('money/date:', JSON.stringify(mp));
 
-  const ok = errs.length === 0 && hubCount >= 5 && payShown === 1 &&
+  const ok = errs.length === 0 && hubCount >= 2 && payShown === 1 &&
     parseResult.headers[0] === 'Fecha' && parseResult.headers.length === 6 && parseResult.dataRows === 3;
   console.log('ERRORS:', errs.length ? errs : 'none');
   console.log(ok ? '\n✅ ALL PASS' : '\n❌ FAIL');
