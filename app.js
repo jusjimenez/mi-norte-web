@@ -11,7 +11,7 @@ const OLD_KEY   = "mi_norte_data_v2";
    El motor de todas ya existe: esto solo controla qué se muestra y cuándo. */
 const FEATURE_META = {
   categorias:   { name: "Categorías",           desc: "Separá tus gastos por tipo",              icon: "🏷️" },
-  presupuestos: { name: "Presupuestos",         desc: "Límites por categoría, con alertas",      icon: "🎯" },
+  presupuestos: { name: "Presupuestos",         desc: "Aparta comida y esenciales de tu gasto diario", icon: "🎯" },
   deudas:       { name: "Deudas y préstamos",    desc: "Saldos, intereses y recordatorios de pago", icon: "💸" },
   fijos:        { name: "Movimientos fijos",     desc: "Ingresos y gastos que se repiten cada mes", icon: "🔁" },
   proximos:     { name: "Próximos pagos",        desc: "Lo que se te viene, en un calendario",    icon: "📅" },
@@ -118,9 +118,11 @@ const HELP = {
   safeToday: {
     title: "Para gastar hoy",
     html: `Es lo que puedes gastar hoy <b>sin comerte los pagos que vienen</b>.
-      <div class="help-eq">(Dinero disponible − pagos hasta fin de mes) ÷ días restantes</div>
+      <div class="help-eq">(Dinero disponible + ingreso confiable − pagos del mes − presupuestos) ÷ días restantes</div>
       <ul>
         <li>Cuenta tus fijos y cuotas de deuda pendientes del mes.</li>
+        <li>Suma tu ingreso fijo que aún está por entrar (ej. la quincena), <b>mientras no se pase de su fecha</b>. Si el día llega y no lo registras, deja de contarlo.</li>
+        <li>Si activas <b>Presupuestos</b>, aparta lo que presupuestaste y este número queda como plata libre. Sin activarlo, incluye tu comida y gastos del día.</li>
         <li>Si hoy gastas menos, mañana sube. Si te pasas, baja.</li>
         <li>No es un castigo: es tu margen real, en un solo número.</li>
       </ul>`,
@@ -589,6 +591,30 @@ function nextDue() { return upcomingItems(60)[0] || null; }
    La pregunta real del usuario en modo túnel no es "¿cuánto tengo?"
    sino "¿cuánto puedo gastar HOY sin meterme en problemas?".
    =========================================================== */
+/* Ingreso fijo que entra de aquí a fin de mes y todavía es CONFIABLE.
+   Se cuenta mientras no haya pasado su fecha (con 2 días de gracia por
+   fines de semana/feriados). Si venció sin registrarse, deja de contarse:
+   ahí ya no hay certeza del pago y "Mes apretado" puede saltar con razón. */
+function reliableIncome() {
+  const now = new Date(), mk = monthKeyOf(now), todayKey = todayKeyStr(), GRACE = 2;
+  return DB.recurring
+    .filter(r => r.type === "income")
+    .reduce((sum, r) => {
+      if (r.lastPosted === mk) return sum;   // ya entró este mes: vive en el saldo
+      const dueKey = dateInputValue(recurringDueDate(r, now.getFullYear(), now.getMonth()).toISOString());
+      const daysPast = Math.round((new Date(todayKey + "T12:00:00") - new Date(dueKey + "T12:00:00")) / 86400000);
+      return daysPast <= GRACE ? sum + (r.amount || 0) : sum;
+    }, 0);
+}
+/* Presupuestos como "sobres": si la función está activa, se aparta el SALDO
+   RESTANTE de cada categoría presupuestada (límite − ya gastado), y
+   "Para gastar hoy" pasa a ser solo la plata realmente libre. Sin la función,
+   la comida y lo variable salen del número diario. */
+function reservedBudget() {
+  if (!feat("presupuestos")) return 0;
+  return budgetStatus(monthKeyOf(new Date()))
+    .reduce((s, b) => s + Math.max(0, b.limit - b.spent), 0);
+}
 function safeToday() {
   if (!accountsExist()) return null;
   const now = new Date();
@@ -598,10 +624,15 @@ function safeToday() {
   // Compromisos de aquí a fin de mes (incluye vencidos: igual hay que pagarlos)
   const items = upcomingItems(45).filter(i => i.key <= monthEndKey);
   const committed = items.reduce((s, i) => s + i.amount, 0);
-  const pool = liquidMoney() - committed;
-  return { pool, committed, daysLeft, items,
+  const income = reliableIncome();       // quincena que viene, mientras sea confiable
+  const reserved = reservedBudget();     // presupuestos apartados (solo si la función está activa)
+  // Realidad: plata + ingreso confiable − obligaciones. Los presupuestos NO
+  // disparan la alarma (son autoimpuestos); solo achican el número diario.
+  const base = liquidMoney() + income - committed;
+  const pool = base - reserved;
+  return { pool, base, committed, income, reserved, daysLeft, items,
     amount: Math.max(0, Math.floor(pool / daysLeft)),
-    crisis: pool < 0 && items.length > 0 };
+    crisis: base < 0 && items.length > 0 };
 }
 /* Modo crisis: cuando el mes no alcanza, un plan de qué pagar primero
    en vez de solo mostrar el hueco. Orden: vencidos primero (frenan recargos),
@@ -1024,10 +1055,13 @@ function momentoHTML() {
       <div class="mo-hero-s">La plata no cubre todos los pagos. Vamos por orden, con calma.</div>
     </button>`;
   } else if (st) {
+    const sub = st.reserved > 0
+      ? "Ya aparté tus pagos y lo que presupuestaste."
+      : "Incluye tu comida y gastos del día.";
     hero = `<div class="mo-hero">
       <div class="mo-hero-k">Para gastar hoy ${helpBtn("safeToday")}</div>
       <div class="mo-hero-v">${fmtHero(st.amount)}</div>
-      <div class="mo-hero-s">Ya aparté tus pagos de este mes.</div>
+      <div class="mo-hero-s">${sub}</div>
     </div>`;
   } else {
     hero = `<button class="mo-hero" id="mo-addacc">
@@ -1749,6 +1783,11 @@ function openBudgets() {
   openSheet(`
     <div class="toolbar"><h2 style="margin:0">Presupuestos</h2><button class="x" onclick="closeSheet()">✕</button></div>
     <p class="hint">Define un límite mensual por categoría de gasto. Deja en 0 para no limitar.</p>
+    <div class="info-note">
+      <span class="info-t">Cómo afecta tu "Para gastar hoy"</span>
+      Lo que presupuestas se <b>aparta</b>: "Para gastar hoy" pasa a ser solo la plata libre, después de tu comida y esenciales.
+      Lo que <b>no</b> presupuestes sigue saliendo del número diario. Si desactivas esta función, "Para gastar hoy" vuelve a incluir todo lo variable.
+    </div>
     ${hasHist ? `<button class="btn line" id="bud-suggest" style="margin-bottom:14px">✨ Sugerir según tu histórico</button>` : ""}
     <div class="card">
       ${DB.categories.expense.map(c => `

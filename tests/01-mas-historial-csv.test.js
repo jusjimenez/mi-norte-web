@@ -41,9 +41,14 @@ Fecha,Referencia,Descripción,Débito,Crédito,Saldo
   await page.goto(`http://localhost:${port}/index.html`);
   await page.waitForFunction(() => document.querySelector('#screen') && document.querySelector('#screen').children.length > 0);
 
-  // 1) Más tab navigation
-  await page.click('[data-tab="more"]');
-  await page.waitForSelector('.hub-row');
+  // 1) Más tab navigation (esperamos el selector específico del hub de Más,
+  //    porque el inicio también usa .hub-row en "Cómo vas"). Reintentamos el
+  //    click por si cae durante un re-render/layout (evita flaky de timing).
+  for (let i = 0; i < 5; i++) {
+    await page.click('[data-tab="more"]');
+    try { await page.waitForSelector('#hub-deudas', { timeout: 2000 }); break; }
+    catch (e) { if (i === 4) throw e; }
+  }
   const hubCount = await page.$$eval('.hub-row', els => els.length);
   const hubRowStyled = await page.$eval('.hub', el => getComputedStyle(el).borderRadius);
   console.log('MORE tab hub-rows:', hubCount, 'radius:', hubRowStyled);
