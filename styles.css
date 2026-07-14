@@ -63,17 +63,37 @@ input, textarea, select { -webkit-user-select: text; user-select: text; }
 
 #app { min-height: 100vh; display: flex; flex-direction: column; }
 
+/* ----- Barra de navegación (título contraíble, estilo iOS) ----- */
+.navbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 60;
+  height: calc(var(--safe-top) + 46px); padding-top: var(--safe-top);
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border-bottom: 1px solid transparent;
+  transition: background .25s ease, border-color .25s ease;
+  -webkit-backdrop-filter: none; backdrop-filter: none; pointer-events: none;
+}
+.navbar.scrolled {
+  background: var(--elev);
+  -webkit-backdrop-filter: saturate(160%) blur(20px); backdrop-filter: saturate(160%) blur(20px);
+  border-bottom-color: var(--hairline);
+}
+#navbar-title {
+  font-size: 16px; font-weight: 700; letter-spacing: -0.01em;
+  opacity: 0; transform: translateY(4px); transition: opacity .2s ease, transform .2s ease;
+}
+.navbar.scrolled #navbar-title { opacity: 1; transform: none; }
+
 /* ----- Pantalla ----- */
 .screen {
   flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
-  padding: calc(var(--safe-top) + 10px) 16px calc(100px + var(--safe-bottom));
+  padding: calc(var(--safe-top) + 52px) 18px calc(104px + var(--safe-bottom));
   max-width: 620px; width: 100%; margin: 0 auto;
 }
 .screen::-webkit-scrollbar { display: none; }
 
-/* ----- Título ----- */
-.head { margin: 10px 2px 14px; }
-.head h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 2px; line-height: 1.05; }
+/* ----- Título grande (se contrae en la barra al hacer scroll) ----- */
+.head { margin: 4px 2px 18px; }
+.head h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.025em; margin: 0 0 2px; line-height: 1.05; }
 .head p { margin: 0; color: var(--label-2); font-size: 14px; }
 
 /* Etiqueta micro (eyebrow) */

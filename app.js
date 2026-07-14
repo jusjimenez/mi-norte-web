@@ -832,9 +832,16 @@ function render() {
   if (currentTab === "reports" && !feat("reportes")) currentTab = "home";  // pestaña apagada
   const screen = $("#screen");
   screen.innerHTML = SCREENS[currentTab]();
-  screen.scrollTop = 0;
+  window.scrollTo(0, 0);
   WIRE[currentTab]?.(screen);
   $$(".tab").forEach(b => b.classList.toggle("on", b.dataset.tab === currentTab));
+  syncNavbar();
+}
+/* La barra superior copia el título grande de la pantalla y lo revela al hacer
+   scroll (título contraíble estilo app). */
+function syncNavbar() {
+  const h1 = $("#screen .head h1"), nb = $("#navbar");
+  if (nb) { $("#navbar-title").textContent = h1 ? h1.textContent.replace(/\s*👋\s*$/, "") : ""; nb.classList.remove("scrolled"); }
 }
 /* Muestra/oculta pestañas según las funciones activas (hoy solo Reportes). */
 function applyFeatureTabs() {
@@ -3150,6 +3157,20 @@ document.body.insertAdjacentHTML("beforeend", `
   </defs></svg>`);
 
 $$(".tab").forEach(b => b.onclick = () => { currentTab = b.dataset.tab; render(); });
+
+/* Revela la barra de título al hacer scroll (contraíble estilo app).
+   El scroll ocurre en la ventana (el contenido crece bajo la barra fija). */
+(function () {
+  const nb = $("#navbar"); if (!nb) return;
+  let ticking = false;
+  window.addEventListener("scroll", () => {
+    if (ticking) return; ticking = true;
+    requestAnimationFrame(() => {
+      const y = window.scrollY || document.documentElement.scrollTop || 0;
+      nb.classList.toggle("scrolled", y > 24); ticking = false;
+    });
+  }, { passive: true });
+})();
 window.closeSheet = closeSheet; // usado por onclick inline
 
 /* Botones "?" (delegado, sobrevive a los re-render) */

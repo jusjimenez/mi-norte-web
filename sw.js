@@ -1,5 +1,5 @@
 /* MI NORTE — service worker (offline-first) */
-const CACHE = "mn-esencial-v1";
+const CACHE = "mn-esencial-v2";
 const ASSETS = [
   "./",
   "./index.html",
