@@ -125,6 +125,19 @@ input, textarea, select { -webkit-user-select: text; user-select: text; }
 .mo-h-score.big span { font-size: 17px; }
 .mo-h-lvl.big { font-size: 20px; margin: 2px 0 8px; }
 .mo-step-txt { flex: 1; font-size: 14px; line-height: 1.35; }
+.mo-hero { display: block; width: 100%; text-align: left; background: none; border: none; color: inherit; font: inherit;
+  padding: 18px 16px 16px; border-bottom: 1px solid var(--sep); }
+button.mo-hero { cursor: pointer; }
+button.mo-hero:active { background: var(--card-press); }
+.mo-hero-k { font-size: 11.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--label-2);
+  font-weight: 700; display: flex; align-items: center; gap: 7px; }
+.mo-hero-v { font-size: 40px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.05; margin: 4px 0 3px;
+  font-variant-numeric: tabular-nums; }
+.mo-hero-v .cur { font-size: .46em; font-weight: 600; color: var(--label-2); vertical-align: .34em; margin-right: 3px; letter-spacing: 0; }
+.mo-hero-v.muted-v { color: var(--label-3); }
+.mo-hero-s { font-size: 13px; color: var(--label-2); line-height: 1.35; }
+.mo-hero.crisis .mo-hero-k { color: var(--amber); }
+.mo-hero.crisis .mo-hero-v { font-size: 22px; color: var(--amber); }
 .mo-win { padding: 11px 15px; font-size: 13px; color: var(--label-2); background: var(--fill-2); text-align: center; }
 .mo-safe { display: flex; align-items: center; gap: 12px; padding: 14px 15px; width: 100%;
   background: none; border: none; color: inherit; font: inherit; text-align: left; }

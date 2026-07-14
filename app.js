@@ -859,83 +859,19 @@ function donut(segments, centerTop, centerBottom) {
 
 /* ---------------- RESUMEN (Inicio) ---------------- */
 SCREENS.home = () => {
-  const t = monthTotals(viewMonth);
-  const prevMk = shiftMonth(viewMonth, -1);
-  const prev = monthTotals(prevMk);
-  const proj = projectionForMonth(viewMonth);
-  const sparkVals = lastMonths(6).map(mk => monthTotals(mk).balance);
-  const balDelta = t.balance - prev.balance;
-  const hasHistory = DB.transactions.length > 0;
-  const budgets = budgetStatus(viewMonth).filter(b => b.over || b.pct >= 80).slice(0, 3);
-  const recent = [...DB.transactions].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 4);
-  const goal = DB.settings.savingsGoal || 0;
-  const balancePos = t.balance >= 0;
-
-  const delta = (cur, old) => {
-    if (!old) return "";
-    const d = cur - old;
-    const sign = d > 0 ? "▲" : d < 0 ? "▼" : "•";
-    const cls = d > 0 ? "up" : d < 0 ? "down" : "flat";
-    return `<span class="delta ${cls}">${sign} ${fmt(Math.abs(d))}</span>`;
-  };
-
   if (!DB.transactions.length && !DB.accounts.length && !DB.goals.length) return homeWelcome();
+
+  const recent = [...DB.transactions].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 4);
+  const cur = monthTotals(monthKeyOf(new Date()));
+  const score = healthScore(), lvl = healthLevel(score), cd = cushion();
+  const overBudget = budgetStatus(monthKeyOf(new Date())).filter(b => b.over).length;
+
+  // "Cómo vas": el pulso, en filas tocables y calmas (el tablero completo vive en Reportes)
+  const cvRow = (id, title, sub, tint) => `<button class="hub-row" id="${id}"><div class="hub-txt"><div class="hub-t"${tint ? ` style="color:${tint}"` : ""}>${title}</div><div class="hub-s">${sub}</div></div><span class="hub-chev">›</span></button>`;
+
   return `
-    <div class="head"><h1>${greeting()} 👋</h1><p>Vamos paso a paso.</p></div>
-    ${accountsExist() ? networthBannerHTML() : ""}
+    <div class="head"><h1>${greeting()} 👋</h1><p>Un vistazo, sin enredos.</p></div>
     ${momentoHTML()}
-
-    <div class="section-title">Este mes</div>
-    ${monthNav()}
-
-    ${recurringPendings().length ? `
-    <div class="reminder" id="pend-rem">
-      <div class="rem-ic">🧾</div>
-      <div class="rem-txt"><strong>${recurringPendings().length} fijo${recurringPendings().length > 1 ? "s" : ""} por confirmar</strong><span>Toca para revisar tus pagos y cobros del mes.</span></div>
-    </div>` : ""}
-
-    ${backupDue() ? `
-    <div class="reminder" id="backup-rem">
-      <div class="rem-ic">💾</div>
-      <div class="rem-txt"><strong>Respalda tus datos</strong><span>${DB.settings.lastBackup ? "Hace tiempo que no respaldas." : "Aún no tienes respaldo."} Un toque para protegerlos.</span></div>
-    </div>` : ""}
-
-    ${showReminder() ? `
-    <div class="reminder" id="reminder">
-      <div class="rem-ic">🔔</div>
-      <div class="rem-txt"><strong>Aún no registras movimientos hoy</strong><span>Un toque para mantener tus finanzas al día.</span></div>
-      <button class="rem-x" id="rem-dismiss" aria-label="Descartar">✕</button>
-    </div>` : ""}
-
-    <div class="hero">
-      <div class="hero-label">Balance del mes ${helpBtn("balance")}</div>
-      <div class="hero-value">${balancePos ? "" : "−"}${fmtHero(Math.abs(t.balance))}</div>
-      ${(prev.count || hasHistory) ? `<div class="hero-delta ${balDelta > 0 ? "up" : balDelta < 0 ? "down" : "flat"}">${balDelta > 0 ? "▲" : balDelta < 0 ? "▼" : "•"} ${fmt(Math.abs(balDelta))} <span class="muted">vs. ${esc(shortMonthLabel(prevMk))}</span></div>` : ""}
-      <div class="hero-sub">
-        <span><i class="dot in"></i>Ingresos <span class="v">${fmt(t.income)}</span></span>
-        <span><i class="dot out"></i>Gastos <span class="v">${fmt(t.expense)}</span></span>
-      </div>
-    </div>
-
-    <div class="kpis">
-      <div class="kpi">
-        <div class="kpi-k">Tasa de ahorro ${helpBtn("savings")}</div>
-        <div class="kpi-ring">${ring(t.savingsRate)}<div class="kpi-ringv">${Math.round(t.savingsRate)}%</div></div>
-        <div class="kpi-foot">${goal ? (t.savingsRate >= goal ? `Meta ${goal}% · superada` : `Meta ${goal}%`) : "Sin meta"}</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-k">${isCurrentMonth(viewMonth) ? `Proyección de gasto ${helpBtn("projection")}` : "Movimientos"}</div>
-        <div class="kpi-v">${proj != null ? fmt(proj) : t.count}</div>
-        <div class="kpi-foot">${proj != null ? "aprox. a fin de mes" : "registrados este mes"}</div>
-      </div>
-    </div>
-
-    ${hasHistory ? `
-    <div class="card spark-card">
-      <div class="spark-cap"><span class="lbl">Balance · 6 meses</span><span class="v">${fmt(sparkVals[sparkVals.length - 1])}</span></div>
-      <div class="gap"></div>
-      ${sparkline(sparkVals)}
-    </div>` : ""}
 
     <div class="btn-row">
       <button class="btn" id="h-expense">− Registrar gasto</button>
@@ -943,17 +879,23 @@ SCREENS.home = () => {
     </div>
     <button class="btn line sim-cta" id="h-sim">🧮 ¿Puedo permitirme una compra?</button>
 
-    ${(budgets.length || DB.goals.length || DB.debts.length) ? `<div class="section-title">Seguimiento</div>` : ""}
-    ${budgets.length ? `
-    <div class="card">
-      <h2>Alertas de presupuesto</h2>
-      ${budgets.map(b => `
-        <div class="bud">
-          <div class="bud-top"><span><i class="cdot" style="background:${b.color}"></i>${esc(b.name)}</span>
-            <span class="${b.over ? "over" : "warn-t"}">${fmt(b.spent)} / ${fmt(b.limit)}</span></div>
-          <div class="kpi-bar"><i style="width:${b.pct}%;background:${b.over ? "var(--red)" : "var(--amber)"}"></i></div>
-        </div>`).join("")}
+    ${recurringPendings().length ? `
+    <div class="reminder" id="pend-rem">
+      <div class="rem-ic">🧾</div>
+      <div class="rem-txt"><strong>${recurringPendings().length} fijo${recurringPendings().length > 1 ? "s" : ""} por confirmar</strong><span>Toca para revisar tus pagos y cobros del mes.</span></div>
     </div>` : ""}
+    ${backupDue() ? `
+    <div class="reminder" id="backup-rem">
+      <div class="rem-ic">💾</div>
+      <div class="rem-txt"><strong>Respalda tus datos</strong><span>${DB.settings.lastBackup ? "Hace tiempo que no respaldas." : "Aún no tienes respaldo."} Un toque para protegerlos.</span></div>
+    </div>` : ""}
+
+    <div class="section-title">Cómo vas</div>
+    <div class="hub">
+      ${score != null ? cvRow("cv-health", lvl.name, `Salud ${score}/100 · ${cushionLine(cd)}`, lvl.tint) : ""}
+      ${cvRow("cv-month", `Este mes ${cur.balance >= 0 ? "+" : "−"}${fmt(Math.abs(cur.balance))}`, `Ahorro ${Math.round(cur.savingsRate)}%${overBudget ? ` · ${overBudget} presupuesto${overBudget > 1 ? "s" : ""} excedido${overBudget > 1 ? "s" : ""}` : ""} · ver detalle`)}
+      ${accountsExist() ? cvRow("cv-accounts", `Disponible ${fmt(netWorth())}`, "En todas tus cuentas") : ""}
+    </div>
 
     ${DB.goals.length ? goalsCardHTML() : ""}
     ${DB.debts.length ? debtsCardHTML() : ""}
@@ -997,15 +939,31 @@ function dueLabel(daysAway) {
 }
 function momentoHTML() {
   if (!hasFinData()) return "";
-  const score = healthScore(), lvl = healthLevel(score), cd = cushion();
   const due = nextDue(), step = nextStep(), win = weekdayTip() || todayWin();
   const st = safeToday();
+  let hero;
+  if (st && st.crisis) {
+    hero = `<button class="mo-hero crisis" id="mo-crisis">
+      <div class="mo-hero-k">Mes apretado</div>
+      <div class="mo-hero-v">Ver plan ›</div>
+      <div class="mo-hero-s">La plata no cubre todos los pagos. Vamos por orden, con calma.</div>
+    </button>`;
+  } else if (st) {
+    hero = `<div class="mo-hero">
+      <div class="mo-hero-k">Para gastar hoy ${helpBtn("safeToday")}</div>
+      <div class="mo-hero-v">${fmtHero(st.amount)}</div>
+      <div class="mo-hero-s">Ya aparté tus pagos de este mes.</div>
+    </div>`;
+  } else {
+    hero = `<button class="mo-hero" id="mo-addacc">
+      <div class="mo-hero-k">Para gastar hoy</div>
+      <div class="mo-hero-v muted-v">—</div>
+      <div class="mo-hero-s">Agrega una cuenta con su saldo y te digo cuánto puedes gastar hoy.</div>
+    </button>`;
+  }
   return `
-    <div class="section-title">Tu momento</div>
     <div class="card momento">
-      ${st ? (st.crisis
-        ? `<button class="mo-safe crisis" id="mo-crisis"><span class="mo-safe-k">Mes apretado: la plata no cubre los pagos</span><b class="mo-safe-v">Ver plan ›</b></button>`
-        : `<div class="mo-safe"><span class="mo-safe-k">Para gastar hoy ${helpBtn("safeToday")}</span><b class="mo-safe-v">${fmt(st.amount)}</b></div>`) : ""}
+      ${hero}
       ${due ? `<div class="mo-due ${due.daysAway <= 3 ? "urgent" : ""}">
         <span class="mo-due-ic">${due.daysAway < 0 ? "⚠️" : "⏰"}</span>
         <div class="grow"><div class="mo-due-t">${dueLabel(due.daysAway)}</div><div class="mo-due-s">${esc(due.name)}</div></div>
@@ -1014,11 +972,6 @@ function momentoHTML() {
         <span class="mo-due-ic">✓</span>
         <div class="grow"><div class="mo-due-t">Nada vence esta semana</div><div class="mo-due-s">Vas al día con tus pagos</div></div>
       </div>`}
-      ${score != null ? `<button class="mo-health" id="mo-health">
-        <div class="grow"><div class="mo-h-lvl" style="color:${lvl.tint}">${lvl.name}</div><div class="mo-h-sub">${cushionLine(cd)}</div></div>
-        <div class="mo-h-score"><b>${score}</b><span>/100</span></div>
-        <span class="mo-h-chev">›</span>
-      </button>` : ""}
       ${step ? `<div class="mo-step">
         <div class="mo-step-txt">${step.text}</div>
         ${step.cta ? `<button class="btn small" id="mo-step-cta" data-act="${step.act || ""}">${step.cta}</button>` : ""}
@@ -1057,22 +1010,13 @@ function openHealth() {
 WIRE.home = (root) => {
   const wa = $("#w-account", root);
   if (wa) { wa.onclick = openAccounts; $("#w-expense", root).onclick = () => openTx("expense"); return; }
-  wireMonthNav(root);
-  const rem = $("#reminder", root);
-  if (rem) {
-    rem.onclick = (e) => { if (e.target.id !== "rem-dismiss") openTx("expense"); };
-    $("#rem-dismiss", root).onclick = (e) => {
-      e.stopPropagation();
-      DB.settings.reminderDismissed = todayKeyStr(); save(); render();
-    };
-  }
   $("#h-expense", root).onclick = () => openTx("expense");
   $("#h-income", root).onclick = () => openTx("income");
   $("#h-all", root).onclick = () => { currentTab = "money"; render(); };
+  $("#h-sim", root).onclick = openSimulator;
   const hg = $("#h-goals", root); if (hg) hg.onclick = openGoals;
   const hd = $("#h-debts", root); if (hd) hd.onclick = openDebts;
-  const nwm = $("#nw-manage", root); if (nwm) nwm.onclick = openAccounts;
-  const moH = $("#mo-health", root); if (moH) moH.onclick = openHealth;
+  // "Tu momento"
   const moStep = $("#mo-step-cta", root);
   if (moStep) moStep.onclick = () => {
     const act = moStep.dataset.act;
@@ -1083,11 +1027,16 @@ WIRE.home = (root) => {
     else if (act === "reports") { currentTab = "reports"; render(); }
   };
   const moCr = $("#mo-crisis", root); if (moCr) moCr.onclick = openCrisis;
+  const moAdd = $("#mo-addacc", root); if (moAdd) moAdd.onclick = openAccounts;
   const moDue = $(".mo-due", root);
   if (moDue && !moDue.classList.contains("ok")) moDue.style.cursor = "pointer", moDue.onclick = openUpcoming;
+  // "Cómo vas"
+  const cvH = $("#cv-health", root); if (cvH) cvH.onclick = openHealth;
+  const cvM = $("#cv-month", root); if (cvM) cvM.onclick = () => { currentTab = "reports"; render(); };
+  const cvA = $("#cv-accounts", root); if (cvA) cvA.onclick = openAccounts;
+  // Recordatorios
   const pr = $("#pend-rem", root); if (pr) pr.onclick = openUpcoming;
   const br = $("#backup-rem", root); if (br) br.onclick = () => { currentTab = "settings"; render(); };
-  $("#h-sim", root).onclick = openSimulator;
   wireTxRows(root);
 };
 

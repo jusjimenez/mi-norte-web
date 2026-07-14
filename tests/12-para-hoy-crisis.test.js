@@ -39,7 +39,7 @@ const now = new Date(), Y = now.getFullYear(), M = now.getMonth();
   const r1 = await p1.evaluate(() => {
     const st = safeToday();
     return { pool: st.pool, committed: st.committed, daysLeft: st.daysLeft, amount: st.amount, crisis: st.crisis,
-      shownOnHome: !!document.querySelector('.mo-safe:not(.crisis)'), stepAct: nextStep().act };
+      shownOnHome: !!document.querySelector('.mo-hero:not(.crisis)'), stepAct: nextStep().act };
   });
   const dim = new Date(Y, M + 1, 0).getDate();
   const expDaysLeft = dim - 10 + 1;
