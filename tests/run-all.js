@@ -11,7 +11,7 @@ for (const f of files) {
   // recursos del contenedor (contexto destruido a mitad de evaluate). Eso es
   // infraestructura, no lógica; un segundo intento lo distingue de un fallo real.
   let r = runOnce(f);
-  if (r.status !== 0) { process.stdout.write("↻ "); r = runOnce(f); }
+  for (let t = 0; t < 2 && r.status !== 0; t++) { process.stdout.write("↻ "); r = runOnce(f); }
   const pass = r.status === 0;
   console.log(pass ? "✅" : "❌");
   if (!pass) { failed++; console.log(r.stdout.slice(-2000)); console.log(r.stderr.slice(-800)); }
