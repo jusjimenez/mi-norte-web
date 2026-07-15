@@ -24,7 +24,9 @@ async function seedAndLoad(page, port, seedFn) {
   p1.on('pageerror', e => errs.push('P1 ' + e.message));
   p1.on('console', m => { if (m.type() === 'error') errs.push('P1c ' + m.text()); });
   await seedAndLoad(p1, port, () => {
-    Date.prototype.getHours = function(){ return 10; };
+    const RD = Date; const fx = new RD(2026, 5, 15, 10, 0, 0).getTime();
+    function FD(...a){ if(!(this instanceof FD)) return new RD(fx).toString(); return a.length ? new RD(...a) : new RD(fx); }
+    FD.prototype = RD.prototype; FD.now = () => fx; FD.parse = RD.parse; FD.UTC = RD.UTC; window.Date = FD;
     const now = new Date(), y = now.getFullYear(), m = now.getMonth();
     const iso = (mo, d) => new Date(y, mo, d, 12).toISOString();
     const tx = [];
@@ -56,7 +58,9 @@ async function seedAndLoad(page, port, seedFn) {
   const p2 = await b.newPage();
   p2.on('pageerror', e => errs.push('P2 ' + e.message));
   await seedAndLoad(p2, port, () => {
-    Date.prototype.getHours = function(){ return 10; };
+    const RD = Date; const fx = new RD(2026, 5, 15, 10, 0, 0).getTime();
+    function FD(...a){ if(!(this instanceof FD)) return new RD(fx).toString(); return a.length ? new RD(...a) : new RD(fx); }
+    FD.prototype = RD.prototype; FD.now = () => fx; FD.parse = RD.parse; FD.UTC = RD.UTC; window.Date = FD;
     const now = new Date(), y=now.getFullYear(), m=now.getMonth();
     const iso=(mo,d)=>new Date(y,mo,d,12).toISOString();
     const tx=[];

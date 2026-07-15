@@ -349,6 +349,10 @@ ul.clean li.row span { display: flex; align-items: center; gap: 10px; }
 .btn.small { width: auto; padding: 8px 13px; font-size: 14px; border-radius: 10px; }
 .btn-row { display: flex; gap: 12px; margin-bottom: 16px; }
 .btn-row .btn { flex: 1; margin: 0; }
+/* Botones apilados verticalmente: separación para que no se vean "montados".
+   En una fila (.btn-row) no aplica: ahí el espaciado es horizontal (gap). */
+.btn + .btn { margin-top: 10px; }
+.btn-row .btn + .btn { margin-top: 0; }
 
 /* ----- Campos ----- */
 label.field { display: block; margin-bottom: 14px; }

@@ -156,6 +156,7 @@ function normalize(data) {
     .filter(g => g && typeof g === "object")
     .map(g => ({ id: str(g.id) || uid(), name: str(g.name) || "Meta", kind: str(g.kind) || "ahorro",
       target: pos(g.target), saved: pos(g.saved),
+      freq: g.freq === "quincenal" ? "quincenal" : "mensual",
       targetDate: g.targetDate ? isoOr(g.targetDate, "") : "", createdAt: g.createdAt ? isoOr(g.createdAt, "") : "" }));
   db.debts = (Array.isArray(db.debts) ? db.debts : [])
     .filter(d => d && typeof d === "object")
@@ -570,20 +571,27 @@ function goalPct(g) {
   return Math.max(0, Math.min(100, (g.saved || 0) / g.target * 100));
 }
 function goalRemaining(g) { return Math.max(0, (g.target || 0) - (g.saved || 0)); }
-/* Cuánto apartar por mes para llegar a la fecha objetivo. */
-function goalMonthlyNeeded(g) {
+/* Frecuencia de ahorro elegible: muchas personas cobran por quincena, así que
+   "aparta X/quincena" cae más natural que forzar todo a "/mes". */
+const GOAL_FREQ = {
+  mensual:   { label: "Mes",      per: "/mes",      days: 30 },
+  quincenal: { label: "Quincena", per: "/quincena", days: 15 },
+};
+function goalFreq(g) { return GOAL_FREQ[g && g.freq] || GOAL_FREQ.mensual; }
+/* Cuánto apartar por período (según la frecuencia elegida) para llegar a la fecha. */
+function goalPerPeriod(g) {
   const rem = goalRemaining(g);
   if (rem <= 0 || !g.targetDate) return 0;
   const days = (new Date(g.targetDate) - Date.now()) / 86400000;
-  const months = Math.max(1, days / 30);
-  return Math.ceil(rem / months);
+  const periods = Math.max(1, days / goalFreq(g).days);
+  return Math.ceil(rem / periods);
 }
 /* Estado de la meta en tono de aliento: cumplida / al día / atrasada. */
 function goalPace(g) {
   if (goalRemaining(g) <= 0 && (g.target || 0) > 0) return { done: true, label: "¡Meta cumplida! 🎉", tint: "var(--green)" };
   if (!g.targetDate) return null;
   const now = Date.now(), start = new Date(g.createdAt || now).getTime(), end = new Date(g.targetDate).getTime();
-  const needed = goalMonthlyNeeded(g);
+  const needed = goalPerPeriod(g);
   if (end <= now) return { label: "Fecha cumplida", tint: "var(--amber)", needed };
   const frac = start < end ? Math.max(0, Math.min(1, (now - start) / (end - start))) : 0;
   const expected = (g.target || 0) * frac;
@@ -1464,9 +1472,57 @@ function openSheet(html, { fullscreen = false } = {}) {
   root.innerHTML = `<div class="sheet-backdrop ${fullscreen ? "sheet-fullscreen" : ""}"><div class="sheet"><div class="sheet-grip"></div>${html}</div></div>`;
   const bd = $(".sheet-backdrop", root);
   bd.addEventListener("click", (e) => { if (e.target === bd) closeSheet(); });
+  enableSheetDrag(bd, $(".sheet", root));
   return root;
 }
 function closeSheet() { $("#sheet-root").innerHTML = ""; }
+/* Cerrar la hoja deslizándola hacia abajo, estilo iPhone. El arrastre de cierre
+   solo arranca desde el asa (grip) o con la hoja en su tope, para no pelear con
+   el scroll del contenido. Al soltar: si pasó el umbral, se va; si no, regresa. */
+function enableSheetDrag(bd, sheet) {
+  if (!sheet) return;
+  const grip = sheet.querySelector(".sheet-grip");
+  let startY = 0, dy = 0, mode = null, onGrip = false, startTop = 0;
+  const H = () => sheet.offsetHeight || window.innerHeight;
+
+  sheet.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) { mode = "scroll"; return; }
+    startY = e.touches[0].clientY; dy = 0; mode = null; startTop = sheet.scrollTop;
+    onGrip = !!grip && (e.target === grip || grip.contains(e.target));
+  }, { passive: true });
+
+  sheet.addEventListener("touchmove", (e) => {
+    const delta = e.touches[0].clientY - startY;
+    if (mode === null) {
+      if (delta > 4 && (onGrip || startTop <= 0)) { mode = "dismiss"; sheet.style.transition = "none"; }
+      else if (Math.abs(delta) > 4) mode = "scroll";
+    }
+    if (mode !== "dismiss") return;
+    dy = Math.max(0, delta);
+    sheet.style.transform = `translateY(${dy}px)`;
+    const k = Math.min(1, dy / H());
+    bd.style.background = `rgba(0,0,0,${(0.55 * (1 - k)).toFixed(3)})`;
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+
+  const end = () => {
+    if (mode !== "dismiss") { mode = null; return; }
+    mode = null;
+    sheet.style.transition = "transform .28s cubic-bezier(.32,.72,0,1)";
+    bd.style.transition = "background .28s";
+    if (dy > Math.min(150, H() * 0.28)) {
+      sheet.style.transform = "translateY(100%)";
+      bd.style.background = "rgba(0,0,0,0)";
+      setTimeout(closeSheet, 240);
+    } else {
+      sheet.style.transform = "";
+      bd.style.background = "";
+    }
+    dy = 0;
+  };
+  sheet.addEventListener("touchend", end);
+  sheet.addEventListener("touchcancel", end);
+}
 
 /* Marca (brújula) para usar dentro de la app */
 function brandMark(size) {
@@ -1863,7 +1919,7 @@ function goalLine(g) {
   if (pace && pace.done) return `<span style="color:var(--green)">${pace.label}</span>`;
   const parts = [`Falta ${fmt(rem)}`];
   if (g.targetDate) {
-    parts.push(`aparta ${fmt(goalMonthlyNeeded(g))}/mes`);
+    parts.push(`aparta ${fmt(goalPerPeriod(g))}${goalFreq(g).per}`);
     if (pace) parts.push(`<span style="color:${pace.tint}">${pace.label}</span>`);
   } else parts.push(`${Math.round(goalPct(g))}%`);
   return parts.join(" · ");
@@ -1884,7 +1940,7 @@ function openGoals() {
   const draw = () => {
     openSheet(`
       <div class="toolbar"><h2 style="margin:0">Metas de ahorro</h2><button class="x" onclick="closeSheet()">✕</button></div>
-      <p class="hint">Fija un objetivo, ponle fecha y te digo cuánto apartar por mes para llegar.</p>
+      <p class="hint">Fija un objetivo, ponle fecha y elige si guardás por mes o por quincena: te digo cuánto apartar para llegar.</p>
       ${DB.goals.length ? `<div class="card">${DB.goals.map(g => {
         const pace = goalPace(g);
         return `<div class="goal">
@@ -1903,17 +1959,22 @@ function openGoals() {
         ${cushion().monthly > 0 ? `<button class="btn small line" id="goal-cushion" style="margin-bottom:12px">Sugerir colchón de 1 mes (${fmt(Math.round(cushion().monthly))})</button>` : ""}
         <label class="field"><span>Monto objetivo</span><input type="number" id="goal-target" inputmode="decimal" placeholder="0" /></label>
         <label class="field"><span>Fecha objetivo (opcional)</span><input type="date" id="goal-date" /></label>
+        <div class="label">Quiero guardar cada</div>
+        <div class="seg" id="goal-freq"><button data-v="mensual" class="on">Mes</button><button data-v="quincenal">Quincena</button></div>
+        <div class="gap"></div>
         <label class="field"><span>Ya llevas (opcional)</span><input type="number" id="goal-saved" inputmode="decimal" placeholder="0" /></label>
         <button class="btn" id="goal-add">Crear meta</button>
       </div>
     `, { fullscreen: true });
     const cush = $("#goal-cushion");
     if (cush) cush.onclick = () => { $("#goal-target").value = Math.round(cushion().monthly); if (!$("#goal-name").value.trim()) $("#goal-name").value = "Colchón de emergencia"; };
+    let freqSel = "mensual";
+    $$("#goal-freq button").forEach(b => b.onclick = () => { freqSel = b.dataset.v; $$("#goal-freq button").forEach(x => x.classList.toggle("on", x === b)); });
     $("#goal-add").onclick = () => {
       const name = $("#goal-name").value.trim(); if (!name) return toast("Ponle un nombre");
       const target = parseAmount($("#goal-target").value); if (target <= 0) return toast("Escribe el objetivo");
       const dv = $("#goal-date").value;
-      DB.goals.push({ id: uid(), name, kind: "ahorro", target, saved: parseAmount($("#goal-saved").value), targetDate: dv ? new Date(dv + "T12:00:00").toISOString() : "", createdAt: todayISO() });
+      DB.goals.push({ id: uid(), name, kind: "ahorro", target, saved: parseAmount($("#goal-saved").value), freq: freqSel, targetDate: dv ? new Date(dv + "T12:00:00").toISOString() : "", createdAt: todayISO() });
       save(); draw();
     };
     $$("[data-add-goal]").forEach(b => b.onclick = () => openGoalContribution(b.dataset.addGoal, draw));
@@ -1941,20 +2002,25 @@ function openGoalContribution(id, after) {
 }
 function openGoalForm(id, after) {
   const g = DB.goals.find(x => x.id === id); if (!g) return;
+  let freqSel = GOAL_FREQ[g.freq] ? g.freq : "mensual";
   openSheet(`
     <h2>Editar meta</h2>
     <label class="field"><span>Nombre</span><input type="text" id="gf-name" value="${esc(g.name)}" /></label>
     <label class="field"><span>Monto objetivo</span><input type="number" id="gf-target" inputmode="decimal" value="${g.target || ""}" /></label>
     <label class="field"><span>Fecha objetivo (opcional)</span><input type="date" id="gf-date" value="${g.targetDate ? dateInputValue(g.targetDate) : ""}" /></label>
+    <div class="label">Quiero guardar cada</div>
+    <div class="seg" id="gf-freq">${Object.entries(GOAL_FREQ).map(([k, v]) => `<button data-v="${k}" class="${freqSel === k ? "on" : ""}">${v.label}</button>`).join("")}</div>
+    <div class="gap"></div>
     <label class="field"><span>Ahorrado</span><input type="number" id="gf-saved" inputmode="decimal" value="${g.saved || 0}" /></label>
     <button class="btn" id="gf-save">Guardar cambios</button>
     <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cancelar</button>
   `);
+  $$("#gf-freq button").forEach(b => b.onclick = () => { freqSel = b.dataset.v; $$("#gf-freq button").forEach(x => x.classList.toggle("on", x === b)); });
   $("#gf-save").onclick = () => {
     const name = $("#gf-name").value.trim(); if (!name) return toast("Ponle un nombre");
     const target = parseAmount($("#gf-target").value); if (target <= 0) return toast("Escribe el objetivo");
     const dv = $("#gf-date").value;
-    Object.assign(g, { name, target, saved: parseAmount($("#gf-saved").value), targetDate: dv ? new Date(dv + "T12:00:00").toISOString() : "" });
+    Object.assign(g, { name, target, saved: parseAmount($("#gf-saved").value), freq: freqSel, targetDate: dv ? new Date(dv + "T12:00:00").toISOString() : "" });
     save(); closeSheet(); if (after) after();
   };
 }

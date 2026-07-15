@@ -24,14 +24,15 @@ await page.goto(`http://localhost:${port}/index.html`);
 await page.waitForFunction(()=>document.querySelector('#screen')&&document.querySelector('#screen').children.length>0);
 const r=await page.evaluate(()=>{
   const g1=DB.goals[0],g2=DB.goals[1],g3=DB.goals[2];
-  // simular aporte a g1
-  const needed=goalMonthlyNeeded(g1);
+  const monthly=goalPerPeriod(g1);
+  g1.freq='quincenal'; const perQuincena=goalPerPeriod(g1); const perLabel=goalFreq(g1).per;
+  g1.freq='mensual';
   return {
-    g1needed:needed, g1pace:goalPace(g1), g1rem:goalRemaining(g1),
-    g2pace:goalPace(g2), g3pace:goalPace(g3), g3needed:goalMonthlyNeeded(g3)
+    g1needed:monthly, perQuincena, perLabel, g1pace:goalPace(g1), g1rem:goalRemaining(g1),
+    g2pace:goalPace(g2), g3pace:goalPace(g3), g3needed:goalPerPeriod(g3)
   };
 });
-console.log('g1 (300k, lleva 60k, +4m): falta',r.g1rem,'· aparta/mes',r.g1needed,'· pace',JSON.stringify(r.g1pace));
+console.log('g1 (300k, lleva 60k, +4m): falta',r.g1rem,'· /mes',r.g1needed,'· /quincena',r.perQuincena,'('+r.perLabel+')','· pace',JSON.stringify(r.g1pace));
 console.log('g2 (cumplida):',JSON.stringify(r.g2pace));
 console.log('g3 (sin fecha): pace',JSON.stringify(r.g3pace),'needed',r.g3needed);
 // render goals sheet content
@@ -41,6 +42,8 @@ console.log('\n--- GOALS SHEET (extracto) ---\n'+txt.split('\n').slice(0,14).joi
 // g1: remaining 240000 over 4 months -> 60000/mes. pace: created -2m, target +4m => total 6m, elapsed 2m => frac .333, expected 300k*.333=100k, saved 60k < 100k => atrasado
 const ok = errs.length===0 &&
   r.g1rem===240000 && r.g1needed>60000 && r.g1needed<70000 &&
+  // frecuencia: quincena ~ mitad del mes; etiqueta correcta
+  r.perQuincena < r.g1needed && r.perQuincena > r.g1needed*0.45 && r.perQuincena < r.g1needed*0.6 && r.perLabel==='/quincena' &&
   r.g1pace && r.g1pace.ahead===false && r.g1pace.label==='Vas atrasado' &&
   r.g2pace && r.g2pace.done===true &&
   r.g3pace===null && r.g3needed===0;
