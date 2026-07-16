@@ -349,22 +349,6 @@ function projectionForMonth(mk) {
   const daily = w * thisDaily + (1 - w) * histDaily;
   return Math.round(spent + daily * remaining);
 }
-/* Estado por MES calendario (para Reportes/histórico). El límite guardado es
-   por ciclo; si el ciclo es quincenal, se escala a su equivalente mensual para
-   que la comparación contra el gasto del mes tenga sentido. */
-function budgetStatus(mk) {
-  const bd = categoryBreakdown(mk, "expense");
-  const spentBy = {}; bd.forEach(b => spentBy[b.name] = b.value);
-  const scale = cyclesPerMonth();
-  return Object.entries(DB.budgets)
-    .filter(([, limit]) => limit > 0)
-    .map(([name, raw]) => {
-      const limit = raw * scale, spent = spentBy[name] || 0;
-      return { name, limit, spent, pct: Math.min(100, spent / limit * 100), over: spent > limit, color: catColor(name, "expense") };
-    })
-    .sort((a, b) => b.pct - a.pct);
-}
-
 /* ---------- Ciclo de pago (presupuestos que siguen a la quincena) ----------
    El presupuesto se cuenta desde el inicio del ciclo ACTUAL, no por mes
    calendario. El ciclo avanza solo (red anti-olvido: quien se distrae no
@@ -1188,14 +1172,13 @@ SCREENS.reports = () => {
   const loc = DB.settings.locale || "es-CR";
   const mode = reportMode;
   const curYear = new Date().getFullYear();
-  let list, periodLabel, trendSeries = null, proj = null, showBudgets = false;
+  let list, periodLabel, trendSeries = null, proj = null;
 
   if (mode === "month") {
     list = txOfMonth(viewMonth);
     periodLabel = monthLabel(viewMonth);
     proj = projectionForMonth(viewMonth);
     trendSeries = lastMonths(6).map(mk => ({ label: shortMonthLabel(mk), ...monthTotals(mk), cur: mk === viewMonth }));
-    showBudgets = true;
   } else if (mode === "year") {
     list = txOfYear(reportYear);
     periodLabel = String(reportYear);
@@ -1213,7 +1196,6 @@ SCREENS.reports = () => {
   const t = totalsOf(list);
   const bd = breakdownOf(list, "expense");
   const incomeBd = breakdownOf(list, "income");
-  const budgets = budgetStatus(viewMonth);
 
   const trendBars = trendSeries ? (() => {
     const maxBar = Math.max(1, ...trendSeries.map(s => Math.max(s.income, s.expense)));
@@ -1300,18 +1282,6 @@ SCREENS.reports = () => {
       ${catRows(incomeBd)}
     </div>
 
-    ${showBudgets ? `
-    <div class="card">
-      <div class="row"><h2 style="margin:0">Presupuestos</h2><button class="linkbtn" id="r-budgets">Editar</button></div>
-      <div class="gap"></div>
-      ${budgets.length ? budgets.map(b => `
-        <div class="bud">
-          <div class="bud-top"><span><i class="cdot" style="background:${b.color}"></i>${esc(b.name)}</span>
-            <span class="${b.over ? "over" : ""}">${fmt(b.spent)} / ${fmt(b.limit)}</span></div>
-          <div class="kpi-bar"><i style="width:${b.pct}%;background:${b.over ? "var(--red)" : b.pct >= 80 ? "var(--amber)" : "var(--green)"}"></i></div>
-        </div>`).join("") : `<div class="muted">Sin presupuestos. Defínelos para recibir alertas.</div>`}
-    </div>` : ""}
-
     <div class="card">
       <h2>Exportar informe</h2>
       <div class="hint">Informe completo de ${esc(periodLabel)} con gráficas y resúmenes, o los movimientos en CSV.</div>
@@ -1343,7 +1313,6 @@ WIRE.reports = (root) => {
     f.onchange = () => { reportFrom = f.value; render(); };
     tt.onchange = () => { reportTo = tt.value; render(); };
   }
-  const rb = $("#r-budgets", root); if (rb) rb.onclick = openBudgets;
   $("#r-reconcile", root).onclick = openReconcile;
   $("#r-pdf", root).onclick = openReportPreview;
   $("#r-csv", root).onclick = () => {
@@ -2677,9 +2646,6 @@ function writtenSummary(list, ctx) {
     const pt = totalsOf(prevList);
     if (pt.expense > 0) { const d = t.expense - pt.expense; s.push(`Gastaste <b>${d > 0 ? "más" : "menos"}</b> que ${prevLabel} (${d > 0 ? "+" : "−"}${fmt(Math.abs(d))}, ${Math.round(Math.abs(d) / pt.expense * 100)}%).`); }
   }
-  const over = ctx.mode === "month" ? budgetStatus(viewMonth).filter(b => b.over) : [];
-  if (over.length) s.push(`⚠ Te pasaste del presupuesto en <b>${over.map(o => esc(o.name)).join(", ")}</b>.`);
-
   if (t.balance < 0) s.push(`Este periodo gastaste más de lo que ingresó; conviene revisar ${bd[0] ? esc(bd[0].name) : "tus gastos"} para recuperar el balance.`);
   else if (t.income > 0 && t.savingsRate < goal) s.push(`Vas bien; para alcanzar tu meta de ahorro, intenta recortar un poco en ${bd[0] ? esc(bd[0].name) : "tus gastos variables"}.`);
   else s.push(`Buen manejo del periodo. Mantén el ritmo. 💪`);
@@ -2719,15 +2685,6 @@ function buildReportHTML(ctx) {
       <h3>Metas y deudas</h3>
       <table class="rp-table"><thead><tr><th>Meta</th><th>Tipo</th><th class="rp-num">Progreso</th><th class="rp-num">%</th></tr></thead><tbody>
         ${DB.goals.map(g => `<tr><td>${esc(g.name)}</td><td>${g.kind === "deuda" ? "Deuda" : "Ahorro"}</td><td class="rp-num">${fmt(g.saved || 0)} / ${fmt(g.target || 0)}</td><td class="rp-num">${Math.round(goalPct(g))}%</td></tr>`).join("")}
-      </tbody></table>
-    </div>` : "";
-
-  const budgets = budgetStatus(viewMonth);
-  const budgetSection = (mode === "month" && budgets.length) ? `
-    <div class="rp-section">
-      <h3>Presupuestos del mes</h3>
-      <table class="rp-table"><thead><tr><th>Categoría</th><th class="rp-num">Gastado</th><th class="rp-num">Límite</th><th class="rp-num">%</th></tr></thead><tbody>
-        ${budgets.map(b => `<tr><td>${esc(b.name)}</td><td class="rp-num" style="color:${b.over ? "#b91c1c" : "#0f172a"}">${fmt(b.spent)}</td><td class="rp-num">${fmt(b.limit)}</td><td class="rp-num">${Math.round(b.pct)}%${b.over ? " ⚠" : ""}</td></tr>`).join("")}
       </tbody></table>
     </div>` : "";
 
@@ -2778,7 +2735,6 @@ function buildReportHTML(ctx) {
 
     ${accountsSection}
     ${goalsSection}
-    ${budgetSection}
 
     <div class="rp-section">
       <h3>Movimientos del periodo (${movs.length})</h3>

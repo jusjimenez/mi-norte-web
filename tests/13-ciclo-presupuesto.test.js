@@ -48,9 +48,6 @@ const server = http.createServer((q, s) => {
   // C) auto-roll: ancla vieja 1 may => rueda sola hasta contener hoy (inicio 15 jun)
   const C = await get('C auto-roll 1may', () => { DB.settings.payCycle = { freq: 'quincenal', anchor: '2026-05-01' }; const c = budgetCycleStatus().find(x => x.name === 'Comida'); return { start: payCycle().start, spent: c.spent }; });
 
-  // D) Reportes: límite escalado a mes-equivalente (quincenal => x2 = 120k) vs gasto del mes (65k)
-  const D = await get('D reportes mensual', () => { DB.settings.payCycle = { freq: 'quincenal', anchor: '2026-06-16' }; const c = budgetStatus('2026-06').find(x => x.name === 'Comida'); return { limit: c.limit, spent: c.spent, over: c.over }; });
-
   // B) reiniciar hoy: el conteo arranca en 0 (el gasto del 18 queda en el ciclo anterior)
   const B = await get('B reset hoy', () => { DB.settings.payCycle = { freq: 'quincenal', anchor: todayKeyStr() }; const c = budgetCycleStatus().find(x => x.name === 'Comida'); return { start: payCycle().start, spent: c ? c.spent : 0 }; });
 
@@ -58,7 +55,6 @@ const server = http.createServer((q, s) => {
     E.start === '2026-06-01' && E.spent === 65000 && E.over === true &&
     A.start === '2026-06-16' && A.end === '2026-07-01' && A.spent === 25000 && A.over === false &&
     C.start === '2026-06-15' && C.spent === 25000 &&
-    D.limit === 120000 && D.spent === 65000 && D.over === false &&
     B.start === '2026-06-20' && B.spent === 0;
   console.log('\nERRORS:', errs.length ? errs : 'none');
   console.log(ok ? '\n✅ ALL PASS' : '\n❌ FAIL');
