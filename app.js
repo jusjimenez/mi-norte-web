@@ -1735,8 +1735,8 @@ function openBudgets() {
       <div class="gap"></div>
       <div class="seg" id="bud-freq"><button data-f="mensual" class="${pc.freq === "mensual" ? "on" : ""}">Mensual</button><button data-f="quincenal" class="${pc.freq === "quincenal" ? "on" : ""}">Quincenal</button></div>
       <div class="gap"></div>
-      <button class="btn line" id="bud-reset">💵 Ya me pagaron · reiniciar ciclo</button>
-      <div class="hint" style="margin-top:8px">El conteo se reinicia solo cada ${per}. Si te pagan antes o después, toca el botón para que calce con el día real del pago.</div>
+      <button class="btn line" id="bud-reset">🔄 Reiniciar ciclo ahora</button>
+      <div class="hint" style="margin-top:8px">El conteo se reinicia solo cada ${per}. Y podés reiniciarlo a mano cuando te paguen (o cuando quieras), para que calce con el día real del pago.</div>
     </div>
 
     ${rows.length ? `<div class="card">
@@ -1765,6 +1765,7 @@ function openBudgets() {
       DB.settings.payCycle = { freq: b.dataset.f, anchor: todayKeyStr() }; save(); draw();
     });
     $("#bud-reset").onclick = () => {
+      if (!confirm("¿Reiniciar el ciclo desde hoy? El conteo de gastos de cada presupuesto vuelve a cero.")) return;
       DB.settings.payCycle = { freq: payCycle().freq, anchor: todayKeyStr() }; save(); draw();
       toast("Ciclo reiniciado desde hoy");
     };
