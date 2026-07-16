@@ -36,7 +36,7 @@ const SEED = {
   accounts: [],       // {id, name, kind:'efectivo'|'banco'|'tarjeta'|'otro', opening}
   goals: [],          // {id, name, kind:'ahorro', target, saved}
   debts: [],          // {id, name, party, dir:'owe'|'owed', principal, rate, ratePeriod, dueDate, note, createdAt, payments:[{id,date,amount,account}]}
-  settings: { currency: "CRC", locale: "es-CR", decimals: "auto", savingsGoal: 20, reminders: true, reminderDismissed: "", gate: true, gateAM: "", gatePM: "", pin: "" },
+  settings: { currency: "CRC", locale: "es-CR", decimals: "auto", theme: "dark", savingsGoal: 20, reminders: true, reminderDismissed: "", gate: true, gateAM: "", gatePM: "", pin: "" },
 };
 
 const ACCOUNT_KINDS = ["efectivo", "banco", "tarjeta", "otro"];
@@ -948,7 +948,7 @@ function openHealth() {
     </div>`;
   const inc = avgOf("income"), load = monthlyDebtLoad();
   openSheet(`
-    <div class="toolbar"><h2 style="margin:0">Tu salud financiera</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="toolbar"><h2 style="margin:0">Tu salud financiera</h2></div>
     <div class="card center">
       <div class="mo-h-score big"><b style="color:${lvl.tint}">${score}</b><span>/100</span></div>
       <div class="mo-h-lvl big" style="color:${lvl.tint}">${lvl.name}</div>
@@ -1333,6 +1333,16 @@ SCREENS.settings = () => {
     </div>
 
     <div class="card">
+      <h2>Apariencia</h2>
+      <div class="seg" id="s-theme">
+        <button data-th="auto" class="${(s.theme || "dark") === "auto" ? "on" : ""}">Automático</button>
+        <button data-th="light" class="${s.theme === "light" ? "on" : ""}">Claro</button>
+        <button data-th="dark" class="${(s.theme || "dark") === "dark" ? "on" : ""}">Oscuro</button>
+      </div>
+      <div class="hint">Automático sigue el tema de tu teléfono.</div>
+    </div>
+
+    <div class="card">
       <h2>Meta de ahorro</h2>
       <label class="field"><span>Porcentaje de tus ingresos que quieres ahorrar</span>
         <input type="number" id="s-goal" value="${s.savingsGoal || 0}" min="0" max="100" inputmode="numeric" /></label>
@@ -1392,6 +1402,10 @@ WIRE.settings = (root) => {
   };
   $$("#s-dec button", root).forEach(b => b.onclick = () => {
     DB.settings.decimals = b.dataset.d === "auto" ? "auto" : +b.dataset.d; save(); render(); toast("Decimales actualizados");
+  });
+  $$("#s-theme button", root).forEach(b => b.onclick = () => {
+    DB.settings.theme = b.dataset.th; save(); applyTheme();
+    $$("#s-theme button", root).forEach(x => x.classList.toggle("on", x === b));
   });
   $("#s-reminders", root).onchange = (e) => {
     DB.settings.reminders = e.target.checked; save(); toast(e.target.checked ? "Recordatorio activado" : "Recordatorio desactivado");
@@ -1476,6 +1490,21 @@ function openSheet(html, { fullscreen = false } = {}) {
   return root;
 }
 function closeSheet() { $("#sheet-root").innerHTML = ""; }
+/* Tema claro/oscuro. "auto" sigue al sistema. Guardamos un espejo en
+   localStorage (mn_theme) para que el <head> lo aplique antes del primer
+   pintado y evitar el parpadeo. */
+function resolvedTheme() {
+  const t = DB.settings.theme || "dark";
+  if (t === "light" || t === "dark") return t;
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+function applyTheme() {
+  const r = resolvedTheme();
+  document.documentElement.setAttribute("data-theme", r);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", r === "light" ? "#f4f6f9" : "#0b0d12");
+  try { localStorage.setItem("mn_theme", r); } catch (e) {}
+}
 /* Cerrar la hoja deslizándola hacia abajo, estilo iPhone. El arrastre de cierre
    solo arranca desde el asa (grip) o con la hoja en su tope, para no pelear con
    el scroll del contenido. Al soltar: si pasó el umbral, se va; si no, regresa. */
@@ -1538,7 +1567,7 @@ function helpBtn(key) { return `<button class="help" data-help="${key}" aria-lab
 function openHelp(key) {
   const h = HELP[key]; if (!h) return;
   openSheet(`
-    <div class="toolbar"><h2 style="margin:0">${esc(h.title)}</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="toolbar"><h2 style="margin:0">${esc(h.title)}</h2></div>
     <div class="help-body">${h.html}</div>
     <div class="gap"></div>
     <button class="btn" onclick="closeSheet()">Entendido</button>
@@ -1600,7 +1629,7 @@ function openCategories(type) {
   const title = type === "income" ? "Categorías de ingreso" : "Categorías de gasto";
   const draw = () => {
     openSheet(`
-      <div class="toolbar"><h2 style="margin:0">${title}</h2><button class="x" onclick="closeSheet()">✕</button></div>
+      <div class="toolbar"><h2 style="margin:0">${title}</h2></div>
       <div class="card">
         <ul class="clean" id="cat-list">
           ${DB.categories[type].map(c => `<li class="row"><span><i class="cdot" style="background:${catColor(c, type)}"></i>${esc(c)}</span>
@@ -1645,7 +1674,7 @@ function suggestBudget(cat) {
 function openBudgets() {
   const hasHist = lastMonths(4).slice(0, -1).some(mk => monthTotals(mk).count > 0);
   openSheet(`
-    <div class="toolbar"><h2 style="margin:0">Presupuestos</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="toolbar"><h2 style="margin:0">Presupuestos</h2></div>
     <p class="hint">Define un límite mensual por categoría de gasto. Deja en 0 para no limitar.</p>
     ${hasHist ? `<button class="btn line" id="bud-suggest" style="margin-bottom:14px">✨ Sugerir según tu histórico</button>` : ""}
     <div class="card">
@@ -1698,7 +1727,7 @@ function openRecurring() {
       </div>`;
     };
     openSheet(`
-      <div class="toolbar"><h2 style="margin:0">Movimientos fijos</h2><button class="x" onclick="closeSheet()">✕</button></div>
+      <div class="toolbar"><h2 style="margin:0">Movimientos fijos</h2></div>
       <p class="hint">Ingresos y gastos que se repiten cada mes (alquiler, salario, servicios). Déjalos en automático o confírmalos con un toque cuando toquen.</p>
       ${DB.recurring.length ? `<div class="card">${DB.recurring.map(recRow).join("")}</div>` : `<div class="card muted">Aún no tienes movimientos fijos.</div>`}
 
@@ -1772,7 +1801,7 @@ function openUpcoming() {
       <div class="amt out">−${fmt(it.amount)}</div>
     </div>`;
   openSheet(`
-    <div class="toolbar"><h2 style="margin:0">Próximos pagos</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="toolbar"><h2 style="margin:0">Próximos pagos</h2></div>
     <div class="card center">
       <div class="lbl">En los próximos 30 días</div>
       <div class="mo-h-score big"><b>${fmt(total30)}</b></div>
@@ -1868,7 +1897,7 @@ function openAccounts() {
   const draw = () => {
     const ekind = editing ? editing.kind : ACCOUNT_KINDS[0];
     openSheet(`
-      <div class="toolbar"><h2 style="margin:0">Cuentas</h2><button class="x" onclick="closeSheet()">✕</button></div>
+      <div class="toolbar"><h2 style="margin:0">Cuentas</h2></div>
       <p class="hint">Efectivo, banco o tarjeta. El saldo se calcula con tu saldo inicial más tus movimientos.</p>
       ${DB.accounts.length ? `<div class="card">${DB.accounts.map(a => `
         <div class="list-item">
@@ -1939,7 +1968,7 @@ function openGoals() {
   const loc = DB.settings.locale || "es-CR";
   const draw = () => {
     openSheet(`
-      <div class="toolbar"><h2 style="margin:0">Metas de ahorro</h2><button class="x" onclick="closeSheet()">✕</button></div>
+      <div class="toolbar"><h2 style="margin:0">Metas de ahorro</h2></div>
       <p class="hint">Fija un objetivo, ponle fecha y elige si guardás por mes o por quincena: te digo cuánto apartar para llegar.</p>
       ${DB.goals.length ? `<div class="card">${DB.goals.map(g => {
         const pace = goalPace(g);
@@ -2044,7 +2073,7 @@ function debtsCardHTML() {
 }
 function openDebts() {
   openSheet(`
-    <div class="toolbar"><h2 style="margin:0">Deudas y préstamos</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="toolbar"><h2 style="margin:0">Deudas y préstamos</h2></div>
     <div class="sumbar">
       <div class="sb"><div class="sb-k">Yo debo</div><div class="sb-v out">${fmt(totalOwe())}</div></div>
       <div class="sb"><div class="sb-k">Me deben</div><div class="sb-v in">${fmt(totalOwed())}</div></div>
@@ -2085,7 +2114,7 @@ function openDebtHistory(id) {
   const accName = aid => { const a = DB.accounts.find(x => x.id === aid); return a ? esc(a.name) : ""; };
   const intTotal = debtInterestPaid(d), capTotal = debtCapitalPaid(d);
   openSheet(`
-    <div class="toolbar"><h2 style="margin:0">Historial de pagos</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="toolbar"><h2 style="margin:0">Historial de pagos</h2></div>
     <div class="hint">${d.dir === "owe" ? "💸" : "💰"} ${esc(d.name)} · ${pays.length} ${pays.length === 1 ? "pago" : "pagos"}</div>
     <div class="gap"></div>
     <div class="proj">
@@ -2812,7 +2841,7 @@ function drawReconUpload() {
   const headers = reconState.headers || [];
   const opts = (sel) => headers.map((h, i) => `<option value="${i}" ${sel === i ? "selected" : ""}>${esc(h || ("Columna " + (i + 1)))}</option>`).join("");
   openSheet(`
-    <div class="toolbar"><h2 style="margin:0">Conciliación bancaria</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="toolbar"><h2 style="margin:0">Conciliación bancaria</h2></div>
     <p class="hint">Sube el CSV de tu banco. Comparo sus movimientos con los que registraste y te muestro las diferencias.</p>
     <button class="btn ghost" id="rc-file-btn">${rows ? "Elegir otro CSV" : "Elegir archivo CSV"}</button>
     <input type="file" id="rc-file" accept=".csv,text/csv,text/plain" hidden />
@@ -2933,7 +2962,7 @@ function drawReconResults() {
   const dl = (iso) => new Date(iso).toLocaleDateString(DB.settings.locale || "es-CR", { day: "numeric", month: "short", year: "numeric" });
   const bankRow = (bi, extra) => `<div class="list-item"><span class="mov-ic" style="color:${bi.amount > 0 ? "var(--green)" : "var(--red)"}">${bi.amount > 0 ? "↑" : "↓"}</span><div class="grow"><div class="t">${esc(bi.note || "(sin descripción)")}</div><div class="s">${dl(bi.date)}</div></div><div class="amt ${bi.amount > 0 ? "in" : "out"}">${signed(bi.amount)}</div>${extra}</div>`;
   openSheet(`
-    <div class="toolbar"><h2 style="margin:0">Conciliación</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="toolbar"><h2 style="margin:0">Conciliación</h2></div>
     <div class="metrics">
       <div class="metric"><div class="v" style="color:var(--green)">${R.matched.length}</div><div class="k">Coinciden</div></div>
       <div class="metric"><div class="v" style="color:var(--amber)">${R.bankOnly.length}</div><div class="k">Faltan en la app</div></div>
@@ -3075,10 +3104,17 @@ document.addEventListener("click", (e) => {
    probabilidad de que iOS/Android lo purguen bajo presión de espacio). */
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
+applyTheme();
 maybeApplyRecurring();
 render();
 showLock();
 maybeShowGate();
+/* Si el tema es "auto", seguir los cambios del sistema en vivo. */
+if (window.matchMedia) {
+  const mq = window.matchMedia("(prefers-color-scheme: light)");
+  const onSys = () => { if ((DB.settings.theme || "dark") === "auto") applyTheme(); };
+  mq.addEventListener ? mq.addEventListener("change", onSys) : mq.addListener(onSys);
+}
 
 /* Al volver a la app (PWA reanudada): aplicar fijos automáticos, pedir PIN y, si toca, mostrar la pantalla de inicio */
 document.addEventListener("visibilitychange", () => {

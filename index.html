@@ -16,6 +16,8 @@
   <meta name="apple-mobile-web-app-title" content="MI NORTE" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
 
+  <!-- Tema aplicado antes del CSS para evitar parpadeo (espejo en localStorage) -->
+  <script>try{var t=localStorage.getItem('mn_theme');document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');}catch(e){}</script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>

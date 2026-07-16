@@ -46,6 +46,42 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
+/* ----- Tema claro ----- */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f4f6f9;
+  --card: #ffffff;
+  --card-2: #eef1f5;
+  --card-press: #e6eaf0;
+  --card-border: rgba(15,23,42,.09);
+  --elev: rgba(255,255,255,.86);
+
+  --label: #0d1520;
+  --label-2: rgba(30,41,59,.62);
+  --label-3: rgba(30,41,59,.38);
+
+  --sep: rgba(15,23,42,.08);
+  --hairline: rgba(15,23,42,.12);
+  --fill: rgba(15,23,42,.05);
+  --fill-2: rgba(15,23,42,.03);
+
+  --tint: #0d9488;
+  --tint-press: #0b8177;
+  --tint-ink: #ffffff;
+  --tint-soft: rgba(13,148,136,.13);
+
+  --grad-a: #0d9488;
+  --grad-b: #6366f1;
+
+  --green: #059669; --green-soft: rgba(5,150,105,.14);
+  --amber: #b45309; --amber-soft: rgba(180,83,9,.14);
+  --red: #dc2626;   --red-soft: rgba(220,38,38,.11);
+  --danger: #dc2626;
+
+  --shadow-card: 0 1px 2px rgba(15,23,42,.05), 0 12px 30px -22px rgba(15,23,42,.45);
+}
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; padding: 0; }
 body {
