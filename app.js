@@ -36,7 +36,7 @@ const SEED = {
   accounts: [],       // {id, name, kind:'efectivo'|'banco'|'tarjeta'|'otro', opening}
   goals: [],          // {id, name, kind:'ahorro', target, saved}
   debts: [],          // {id, name, party, dir:'owe'|'owed', principal, rate, ratePeriod, dueDate, note, createdAt, payments:[{id,date,amount,account}]}
-  settings: { currency: "CRC", locale: "es-CR", decimals: "auto", theme: "dark", savingsGoal: 20, reminders: true, reminderDismissed: "", gate: true, gateAM: "", gatePM: "", pin: "" },
+  settings: { currency: "CRC", locale: "es-CR", decimals: "auto", theme: "dark", payCycle: { freq: "mensual", anchor: "" }, savingsGoal: 20, reminders: true, reminderDismissed: "", gate: true, gateAM: "", gatePM: "", pin: "" },
 };
 
 const ACCOUNT_KINDS = ["efectivo", "banco", "tarjeta", "otro"];
@@ -349,9 +349,58 @@ function projectionForMonth(mk) {
   const daily = w * thisDaily + (1 - w) * histDaily;
   return Math.round(spent + daily * remaining);
 }
+/* Estado por MES calendario (para Reportes/histórico). El límite guardado es
+   por ciclo; si el ciclo es quincenal, se escala a su equivalente mensual para
+   que la comparación contra el gasto del mes tenga sentido. */
 function budgetStatus(mk) {
   const bd = categoryBreakdown(mk, "expense");
   const spentBy = {}; bd.forEach(b => spentBy[b.name] = b.value);
+  const scale = cyclesPerMonth();
+  return Object.entries(DB.budgets)
+    .filter(([, limit]) => limit > 0)
+    .map(([name, raw]) => {
+      const limit = raw * scale, spent = spentBy[name] || 0;
+      return { name, limit, spent, pct: Math.min(100, spent / limit * 100), over: spent > limit, color: catColor(name, "expense") };
+    })
+    .sort((a, b) => b.pct - a.pct);
+}
+
+/* ---------- Ciclo de pago (presupuestos que siguen a la quincena) ----------
+   El presupuesto se cuenta desde el inicio del ciclo ACTUAL, no por mes
+   calendario. El ciclo avanza solo (red anti-olvido: quien se distrae no
+   acumula de más) y se puede reiniciar a mano cuando llega el pago real,
+   así el día del cambio calza con la plata y no con el almanaque. */
+function cycleAdvance(key, freq) {
+  const d = new Date(key + "T12:00:00");
+  if (freq === "quincenal") d.setDate(d.getDate() + 15);
+  else d.setMonth(d.getMonth() + 1);
+  return dateInputValue(d.toISOString());
+}
+function payCycle() {
+  const pc = DB.settings.payCycle || {};
+  const freq = pc.freq === "quincenal" ? "quincenal" : "mensual";
+  const now = new Date();
+  const defAnchor = dateInputValue(new Date(now.getFullYear(), now.getMonth(), 1, 12).toISOString());
+  let start = /^\d{4}-\d{2}-\d{2}$/.test(pc.anchor || "") ? pc.anchor : defAnchor;
+  const today = todayKeyStr();
+  let guard = 0;
+  while (cycleAdvance(start, freq) <= today && guard++ < 800) start = cycleAdvance(start, freq);
+  return { freq, start, end: cycleAdvance(start, freq) };
+}
+function cyclesPerMonth() { return payCycle().freq === "quincenal" ? 2 : 1; }
+function cycleRangeLabel(pc) {
+  const loc = DB.settings.locale || "es-CR";
+  const s = new Date(pc.start + "T12:00:00");
+  const e = new Date(pc.end + "T12:00:00"); e.setDate(e.getDate() - 1);
+  const f = d => d.toLocaleDateString(loc, { day: "numeric", month: "short" });
+  return `Del ${f(s)} al ${f(e)}`;
+}
+/* Estado del CICLO en vivo: gasto desde el inicio del ciclo contra el límite
+   por ciclo (el "sobre" que la persona vigila hoy). */
+function budgetCycleStatus() {
+  const { start } = payCycle(), today = todayKeyStr();
+  const spentBy = {};
+  breakdownOf(txInRange(start, today), "expense").forEach(b => spentBy[b.name] = b.value);
   return Object.entries(DB.budgets)
     .filter(([, limit]) => limit > 0)
     .map(([name, limit]) => {
@@ -782,7 +831,7 @@ SCREENS.home = () => {
   const sparkVals = lastMonths(6).map(mk => monthTotals(mk).balance);
   const balDelta = t.balance - prev.balance;
   const hasHistory = DB.transactions.length > 0;
-  const budgets = budgetStatus(viewMonth).filter(b => b.over || b.pct >= 80).slice(0, 3);
+  const budgets = budgetCycleStatus().filter(b => b.over || b.pct >= 80).slice(0, 3);
   const recent = [...DB.transactions].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 4);
   const goal = DB.settings.savingsGoal || 0;
   const balancePos = t.balance >= 0;
@@ -1673,9 +1722,34 @@ function suggestBudget(cat) {
 }
 function openBudgets() {
   const hasHist = lastMonths(4).slice(0, -1).some(mk => monthTotals(mk).count > 0);
-  openSheet(`
+  const draw = () => {
+    const pc = payCycle();
+    const per = pc.freq === "quincenal" ? "quincena" : "mes";
+    const rows = budgetCycleStatus();
+    openSheet(`
     <div class="toolbar"><h2 style="margin:0">Presupuestos</h2></div>
-    <p class="hint">Define un límite mensual por categoría de gasto. Deja en 0 para no limitar.</p>
+
+    <div class="card">
+      <div class="row"><h2 style="margin:0">Ciclo actual</h2><span class="lbl">${pc.freq === "quincenal" ? "Quincenal" : "Mensual"}</span></div>
+      <div class="hint" style="margin-top:2px">${cycleRangeLabel(pc)}</div>
+      <div class="gap"></div>
+      <div class="seg" id="bud-freq"><button data-f="mensual" class="${pc.freq === "mensual" ? "on" : ""}">Mensual</button><button data-f="quincenal" class="${pc.freq === "quincenal" ? "on" : ""}">Quincenal</button></div>
+      <div class="gap"></div>
+      <button class="btn line" id="bud-reset">💵 Ya me pagaron · reiniciar ciclo</button>
+      <div class="hint" style="margin-top:8px">El conteo se reinicia solo cada ${per}. Si te pagan antes o después, toca el botón para que calce con el día real del pago.</div>
+    </div>
+
+    ${rows.length ? `<div class="card">
+      <h2>Lo que va del ciclo</h2>
+      ${rows.map(b => `
+        <div class="bud">
+          <div class="bud-top"><span><i class="cdot" style="background:${b.color}"></i>${esc(b.name)}</span>
+            <span class="${b.over ? "over" : ""}">${fmt(b.spent)} / ${fmt(b.limit)}</span></div>
+          <div class="kpi-bar"><i style="width:${b.pct}%${b.over ? ";background:var(--red)" : ""}"></i></div>
+        </div>`).join("")}
+    </div>` : ""}
+
+    <p class="hint">Define un límite por ${per} por categoría de gasto. Deja en 0 para no limitar.</p>
     ${hasHist ? `<button class="btn line" id="bud-suggest" style="margin-bottom:14px">✨ Sugerir según tu histórico</button>` : ""}
     <div class="card">
       ${DB.categories.expense.map(c => `
@@ -1687,19 +1761,29 @@ function openBudgets() {
     <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cerrar</button>
   `, { fullscreen: true });
 
-  const sug = $("#bud-suggest");
-  if (sug) sug.onclick = () => {
-    let filled = 0;
-    $$("[data-bud]").forEach(inp => { const s = suggestBudget(inp.dataset.bud); if (s > 0) { inp.value = s; filled++; } });
-    toast(filled ? "Límites sugeridos, ajústalos y guarda" : "Aún no hay historial suficiente");
-  };
-  $("#bud-save").onclick = () => {
-    $$("[data-bud]").forEach(inp => {
-      const v = parseAmount(inp.value);
-      if (v > 0) DB.budgets[inp.dataset.bud] = v; else delete DB.budgets[inp.dataset.bud];
+    $$("#bud-freq button").forEach(b => b.onclick = () => {
+      DB.settings.payCycle = { freq: b.dataset.f, anchor: todayKeyStr() }; save(); draw();
     });
-    save(); closeSheet(); render(); toast("Presupuestos guardados");
+    $("#bud-reset").onclick = () => {
+      DB.settings.payCycle = { freq: payCycle().freq, anchor: todayKeyStr() }; save(); draw();
+      toast("Ciclo reiniciado desde hoy");
+    };
+    const sug = $("#bud-suggest");
+    if (sug) sug.onclick = () => {
+      const scale = cyclesPerMonth();
+      let filled = 0;
+      $$("[data-bud]").forEach(inp => { const s = Math.round(suggestBudget(inp.dataset.bud) / scale / 500) * 500; if (s > 0) { inp.value = s; filled++; } });
+      toast(filled ? "Límites sugeridos, ajústalos y guarda" : "Aún no hay historial suficiente");
+    };
+    $("#bud-save").onclick = () => {
+      $$("[data-bud]").forEach(inp => {
+        const v = parseAmount(inp.value);
+        if (v > 0) DB.budgets[inp.dataset.bud] = v; else delete DB.budgets[inp.dataset.bud];
+      });
+      save(); draw(); render(); toast("Presupuestos guardados");
+    };
   };
+  draw();
 }
 
 /* ---- Movimientos fijos (recurrentes) ---- */
