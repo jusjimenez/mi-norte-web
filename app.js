@@ -137,6 +137,9 @@ function normalize(data) {
       category: str(t.category), note: str(t.note), ref: str(t.ref),
       account: t.account ? str(t.account) : undefined,
       from: t.from ? str(t.from) : undefined, to: t.to ? str(t.to) : undefined,
+      // Rebaja/deducción documentada dentro de un ingreso (ej. salario): el
+      // "amount" es el neto recibido; deduction/deductionNote guardan el detalle.
+      ...(pos(t.deduction) > 0 ? { deduction: pos(t.deduction), deductionNote: str(t.deductionNote) } : {}),
     }));
   db.recurring = (Array.isArray(db.recurring) ? db.recurring : [])
     .filter(r => r && typeof r === "object")
@@ -1050,6 +1053,7 @@ function txRow(t, opts = {}) {
     const parts = [when, esc(t.category || "Otro")];
     if (accountsExist() && t.account) parts.push(esc(accountName(t.account)));
     if (t.ref) parts.push(`N.° ${esc(t.ref)}`);
+    if (inc && t.deduction > 0) parts.push(`rebaja ${fmt(t.deduction)}${t.deductionNote ? ` (${esc(t.deductionNote)})` : ""}`);
     sub = parts.join(" · ");
   }
   const icon = isTransfer ? "⇄" : (inc ? "↑" : "↓");
@@ -1599,10 +1603,19 @@ function openTx(type, editId) {
   const cats = DB.categories[isIncome ? "income" : "expense"];
   const sel = { category: editing ? editing.category : cats[0], account: editing ? editing.account : (DB.accounts[0] && DB.accounts[0].id) };
 
+  const initDed = editing && editing.deduction > 0 ? editing.deduction : 0;
+  const initGross = editing ? (editing.amount || 0) + initDed : "";
   openSheet(`
     <h2>${editing ? "Editar movimiento" : isIncome ? "Registrar ingreso" : "Registrar gasto"}</h2>
-    <label class="field"><span>Monto</span>
-      <input type="number" id="tx-amt" inputmode="decimal" placeholder="0" value="${editing ? editing.amount : ""}" /></label>
+    <label class="field"><span>Monto${isIncome ? " (bruto)" : ""}</span>
+      <input type="number" id="tx-amt" inputmode="decimal" placeholder="0" value="${editing ? initGross : ""}" /></label>
+    ${isIncome ? `
+    <label class="field"><span>Rebaja o deducción (opcional)</span>
+      <input type="number" id="tx-ded" inputmode="decimal" placeholder="0" value="${initDed || ""}" /></label>
+    <label class="field"><span>Motivo de la rebaja (opcional)</span>
+      <input type="text" id="tx-ded-note" placeholder="Ej. préstamo, ausencia, adelanto" value="${editing && editing.deductionNote ? esc(editing.deductionNote) : ""}" /></label>
+    <div class="hint" id="tx-ded-info" style="margin:2px 2px 6px"></div>
+    ` : ""}
     <label class="field"><span>Descripción (opcional)</span>
       <input type="text" id="tx-note" placeholder="${isIncome ? "Salario, venta…" : "¿En qué?"}" value="${editing ? esc(editing.note) : ""}" /></label>
     <div class="rangebar">
@@ -1630,13 +1643,37 @@ function openTx(type, editId) {
     sel.account = b.dataset.a;
     $$("#tx-accs button").forEach(x => x.classList.toggle("on", x === b));
   });
+  const numOf = el => parseFloat(((el && el.value) || "").replace(",", ".")) || 0;
+  if (isIncome) {
+    const g = $("#tx-amt"), dd = $("#tx-ded"), info = $("#tx-ded-info");
+    const drawDed = () => {
+      const gross = numOf(g), ded = numOf(dd);
+      if (ded > 0 && gross > 0) {
+        const net = Math.round((gross - ded) * 100) / 100;
+        info.innerHTML = net <= 0
+          ? `<span style="color:#fca5a5">La rebaja no puede ser igual o mayor que el monto.</span>`
+          : `Se registra <b>${fmt(net)}</b> como ingreso (bruto ${fmt(gross)} − rebaja ${fmt(ded)}).`;
+      } else info.innerHTML = "";
+    };
+    g.addEventListener("input", drawDed); dd.addEventListener("input", drawDed); drawDed();
+  }
   $("#tx-save").onclick = () => {
-    const amt = parseFloat(($("#tx-amt").value || "").replace(",", ".")) || 0;
-    if (amt <= 0) return toast("Escribe un monto");
+    const gross = numOf($("#tx-amt"));
+    if (gross <= 0) return toast("Escribe un monto");
+    let deduction = 0, deductionNote = "";
+    if (isIncome) {
+      deduction = numOf($("#tx-ded")); if (deduction < 0) deduction = 0;
+      if (deduction >= gross) return toast("La rebaja no puede ser igual o mayor que el monto");
+      deductionNote = ($("#tx-ded-note").value || "").trim();
+    }
+    const amt = isIncome ? Math.round((gross - deduction) * 100) / 100 : gross;
     const date = combineDateTime($("#tx-date").value, $("#tx-time").value);
     const data = { type: isIncome ? "income" : "expense", amount: amt, category: sel.category, note: $("#tx-note").value.trim(), ref: $("#tx-ref").value.trim(), account: accountsExist() ? sel.account : undefined };
-    if (editing) { Object.assign(editing, data, { date }); }
-    else { DB.transactions.push({ id: uid(), date, ...data }); }
+    if (isIncome && deduction > 0) { data.deduction = deduction; data.deductionNote = deductionNote; }
+    if (editing) {
+      Object.assign(editing, data, { date });
+      if (!(isIncome && deduction > 0)) { delete editing.deduction; delete editing.deductionNote; }
+    } else { DB.transactions.push({ id: uid(), date, ...data }); }
     save(); closeSheet(); render();
     toast(editing ? "Actualizado" : isIncome ? "Ingreso registrado" : "Gasto registrado");
   };
