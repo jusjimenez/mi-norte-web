@@ -2267,12 +2267,10 @@ function openDebtPayment(id, payId) {
     <div class="hint">${esc(d.name)} · saldo ${fmt(baseBalance)}</div>
     <div class="gap"></div>
     <label class="field"><span>Monto${d.dir === "owe" ? " pagado" : ""}</span><input type="number" id="dp-amt" inputmode="decimal" placeholder="0" value="${initAmt}" /></label>
-    ${hasRate ? `
-      <label class="field"><span>Interés (${d.rate}% ${d.ratePeriod})</span><input type="number" id="dp-int" inputmode="decimal" placeholder="0" value="${initInt}" /></label>
-      <label class="field"><span>Abono a capital</span><input type="number" id="dp-cap" inputmode="decimal" placeholder="0" /></label>
-      <div class="hint" id="dp-note" style="margin:2px 2px 4px"></div>
-      <div class="gap"></div>
-    ` : ""}
+    <label class="field"><span>Interés${hasRate ? ` (${d.rate}% ${d.ratePeriod})` : " (si aplica)"}</span><input type="number" id="dp-int" inputmode="decimal" placeholder="0" value="${initInt || ""}" /></label>
+    <label class="field"><span>Abono a capital</span><input type="number" id="dp-cap" inputmode="decimal" placeholder="0" /></label>
+    <div class="hint" id="dp-note" style="margin:2px 2px 4px"></div>
+    <div class="gap"></div>
     <label class="field"><span>Fecha</span><input type="date" id="dp-date" value="${editing ? dateInputValue(editing.date) : dateInputValue(todayISO())}" /></label>
     ${accountsExist() ? `
       <div class="switch-row"><span>Registrar también como movimiento</span><label class="switch"><input type="checkbox" id="dp-link" ${sel.link ? "checked" : ""} /><span class="sl"></span></label></div>
@@ -2287,9 +2285,11 @@ function openDebtPayment(id, payId) {
     lk.onchange = () => { sel.link = lk.checked; $("#dp-acc-wrap").hidden = !lk.checked; };
     $$("#dp-acc button").forEach(b => b.onclick = () => { sel.account = b.dataset.a; $$("#dp-acc button").forEach(x => x.classList.toggle("on", x === b)); });
   }
-  if (hasRate) {
+  {
     const amtEl = $("#dp-amt"), intEl = $("#dp-int"), capEl = $("#dp-cap"), noteEl = $("#dp-note");
-    const setCap = () => { capEl.value = Math.round((parseAmount(amtEl.value) - parseAmount(intEl.value)) * 100) / 100; drawNote(); };
+    // Al editar respetamos el interés guardado; en un pago nuevo se sugiere solo.
+    let intTouched = !!editing;
+    const suggest = () => Math.min(parseAmount(amtEl.value) || 0, Math.round(baseBalance * monthlyRate));
     const drawNote = () => {
       const cap = parseAmount(capEl.value), intr = parseAmount(intEl.value);
       const newBal = Math.max(0, baseBalance - cap);
@@ -2297,14 +2297,19 @@ function openDebtPayment(id, payId) {
         ? `<span style="color:#fca5a5">El interés no puede ser mayor que el monto.</span>`
         : `De este pago, ${fmt(intr)} es interés y ${fmt(cap)} baja el capital. Saldo quedaría en <b>${fmt(newBal)}</b>.`;
     };
-    amtEl.oninput = setCap;
-    intEl.oninput = setCap;
-    capEl.oninput = () => { intEl.value = Math.round((parseAmount(amtEl.value) - parseAmount(capEl.value)) * 100) / 100; drawNote(); };
-    setCap();
+    const recompute = () => {
+      if (!intTouched) intEl.value = suggest() || "";
+      capEl.value = Math.round((parseAmount(amtEl.value) - parseAmount(intEl.value)) * 100) / 100;
+      drawNote();
+    };
+    amtEl.oninput = recompute;
+    intEl.oninput = () => { intTouched = true; capEl.value = Math.round((parseAmount(amtEl.value) - parseAmount(intEl.value)) * 100) / 100; drawNote(); };
+    capEl.oninput = () => { intTouched = true; intEl.value = Math.round((parseAmount(amtEl.value) - parseAmount(capEl.value)) * 100) / 100; drawNote(); };
+    recompute();
   }
   $("#dp-save").onclick = () => {
     const amt = parseAmount($("#dp-amt").value); if (amt <= 0) return toast("Escribe un monto");
-    let interest = hasRate ? parseAmount($("#dp-int").value) : 0;
+    let interest = parseAmount($("#dp-int").value);
     if (interest < 0) interest = 0;
     if (interest > amt) return toast("El interés no puede ser mayor que el monto");
     const capital = Math.round((amt - interest) * 100) / 100;
