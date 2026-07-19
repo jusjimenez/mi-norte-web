@@ -1407,7 +1407,7 @@ SCREENS.settings = () => {
       <button class="btn line" id="s-export-enc">🔒 Exportar cifrado (con contraseña)</button>
       <button class="btn line" id="s-csv-all">Exportar todo (CSV)</button>
       <div class="gap"></div>
-      <button class="btn soft-danger" id="s-reset">Borrar todos los datos</button>
+      <button class="btn soft-danger" id="s-reset">Borrar datos…</button>
       <input type="file" id="s-import-file" accept="application/json,.json" hidden />
     </div>
 
@@ -1457,12 +1457,39 @@ WIRE.settings = (root) => {
     reader.onload = () => importBackupData(reader.result);
     reader.readAsText(file);
   };
-  $("#s-reset", root).onclick = () => {
-    if (confirm("¿Borrar todos tus datos? Esto no se puede deshacer.")) {
-      DB = structuredClone(SEED); save(); render(); toast("Datos borrados");
-    }
-  };
+  $("#s-reset", root).onclick = openResetOptions;
 };
+/* Borrado con opciones: solo el historial de movimientos (conservando cuentas,
+   deudas, metas, presupuestos) o todo. Antes era un único "borrar todo". */
+function openResetOptions() {
+  openSheet(`
+    <h2>Borrar datos</h2>
+    <p class="hint">Elige qué borrar. No se puede deshacer, así que si tienes dudas exporta un respaldo antes.</p>
+    <div class="card">
+      <button class="btn line" id="rs-mov">Borrar solo los movimientos</button>
+      <div class="hint" style="margin-top:8px">Borra tu historial de ingresos y gastos. Tus cuentas conservan el saldo actual, y tus <b>deudas y préstamos</b>, metas, presupuestos y categorías quedan intactos.</div>
+    </div>
+    <div class="card">
+      <button class="btn soft-danger" id="rs-all">Borrar todos los datos</button>
+      <div class="hint" style="margin-top:8px">Borra todo y deja la app como recién instalada.</div>
+    </div>
+    <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cancelar</button>
+  `);
+  $("#rs-mov").onclick = () => {
+    if (!confirm("¿Borrar solo los movimientos? Tus saldos, deudas y préstamos se conservan.")) return;
+    // Preservar el saldo actual como nuevo saldo inicial: el dinero no cambia,
+    // solo se limpia el historial.
+    DB.accounts.forEach(a => { a.opening = accountBalance(a.id); });
+    DB.transactions = [];
+    // Los pagos de deuda viven en la deuda; solo soltamos el vínculo al movimiento borrado.
+    DB.debts.forEach(d => (d.payments || []).forEach(p => { p.txId = undefined; }));
+    save(); closeSheet(); render(); toast("Movimientos borrados");
+  };
+  $("#rs-all").onclick = () => {
+    if (!confirm("¿Borrar TODOS los datos? Esto no se puede deshacer.")) return;
+    DB = structuredClone(SEED); save(); closeSheet(); render(); toast("Datos borrados");
+  };
+}
 
 /* ---------------- MÁS (hub de herramientas) ---------------- */
 SCREENS.more = () => {
