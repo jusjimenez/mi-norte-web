@@ -1463,11 +1463,12 @@ WIRE.settings = (root) => {
    independiente (ej. reiniciar deudas y conservar movimientos, o al revés). */
 const RESET_ITEMS = [
   ["mov", "Movimientos", "Historial de ingresos y gastos"],
+  ["saldos", "Saldos de cuentas", "Pone los saldos en cero (conserva las cuentas)"],
   ["debts", "Deudas y préstamos", "Saldos, pagos y recordatorios"],
   ["goals", "Metas de ahorro", ""],
   ["budgets", "Presupuestos", ""],
   ["recurring", "Movimientos fijos", ""],
-  ["accounts", "Cuentas y saldos", "Borra las cuentas (y también los movimientos)"],
+  ["accounts", "Cuentas", "Elimina las cuentas (y también sus movimientos)"],
 ];
 function openResetOptions() {
   openSheet(`
@@ -1489,11 +1490,17 @@ function openResetOptions() {
     const keys = RESET_ITEMS.map(i => i[0]);
     if (!keys.some(on)) return toast("Marca al menos una cosa");
     if (!confirm("¿Borrar lo seleccionado? Esto no se puede deshacer.")) return;
-    const wipeAcc = on("accounts");
-    const wipeMov = on("mov") || wipeAcc;
-    // Si limpias movimientos pero conservas cuentas, el saldo actual se conserva
-    // (pasa a ser el saldo inicial). Hay que calcularlo ANTES de borrar.
-    if (wipeMov && !wipeAcc) DB.accounts.forEach(a => { a.opening = accountBalance(a.id); });
+    const wipeAcc = on("accounts");        // eliminar cuentas
+    const zeroBal = on("saldos");          // poner saldos en cero (conserva cuentas)
+    const wipeMov = on("mov") || wipeAcc;  // borrar cuentas implica borrar sus movimientos
+    // Ajuste del saldo inicial de las cuentas que se conservan (ANTES de borrar los
+    // movimientos, porque el saldo actual depende de ellos):
+    //  · Saldos en cero  → opening = 0
+    //  · Solo movimientos → se conserva el saldo actual (opening = saldo de hoy)
+    if (!wipeAcc) {
+      if (zeroBal) DB.accounts.forEach(a => { a.opening = 0; });
+      else if (wipeMov) DB.accounts.forEach(a => { a.opening = accountBalance(a.id); });
+    }
     if (wipeMov) { DB.transactions = []; DB.debts.forEach(d => (d.payments || []).forEach(p => { p.txId = undefined; })); }
     if (wipeAcc) DB.accounts = [];
     if (on("debts")) DB.debts = [];

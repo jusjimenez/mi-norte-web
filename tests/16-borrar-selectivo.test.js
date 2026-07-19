@@ -46,7 +46,7 @@ const server = http.createServer((q, s) => {
     const out = await page.evaluate((cfg) => {
       openResetOptions();
       // ajustar casillas a la config exacta
-      ['mov', 'debts', 'goals', 'budgets', 'recurring', 'accounts'].forEach(k => {
+      ['mov', 'saldos', 'debts', 'goals', 'budgets', 'recurring', 'accounts'].forEach(k => {
         const el = document.getElementById('rs-' + k); if (!el) return;
         const want = !!cfg[k];
         if (el.checked !== want) { el.checked = want; el.dispatchEvent(new Event('change', { bubbles: true })); }
@@ -68,6 +68,10 @@ const server = http.createServer((q, s) => {
   console.log('B solo deudas:', JSON.stringify(B));
   const C = await run({ accounts: true }, 'C');
   console.log('C cuentas (fuerza mov):', JSON.stringify(C));
+  const D = await run({ mov: true, saldos: true }, 'D');
+  console.log('D movimientos + saldos:', JSON.stringify(D));
+  const E = await run({ saldos: true }, 'E');
+  console.log('E solo saldos (conserva movimientos):', JSON.stringify(E));
 
   const ok = errs.length === 0 &&
     // A: sin tx, saldo conservado (opening=130000, nw=130000), deuda intacta (txId suelto), metas/presupuesto intactos
@@ -75,7 +79,11 @@ const server = http.createServer((q, s) => {
     // B: deudas fuera; movimientos, saldos, metas y presupuesto intactos
     B.debts === 0 && B.tx === 2 && B.accounts === 1 && B.nw === 130000 && B.goals === 1 && B.budgets === 1 &&
     // C: cuentas fuera + movimientos fuera; deudas y metas se conservan
-    C.accounts === 0 && C.tx === 0 && C.nw === 0 && C.debts === 1 && C.goals === 1;
+    C.accounts === 0 && C.tx === 0 && C.nw === 0 && C.debts === 1 && C.goals === 1 &&
+    // D: movimientos + saldos -> cuenta conservada con saldo 0, sin tx
+    D.accounts === 1 && D.tx === 0 && D.opening === 0 && D.nw === 0 && D.debts === 1 &&
+    // E: solo saldos -> opening 0 pero movimientos intactos (nw = suma de movimientos = 30000)
+    E.accounts === 1 && E.tx === 2 && E.opening === 0 && E.nw === 30000 && E.debts === 1;
   console.log('\nERRORS:', errs.length ? errs : 'none');
   console.log(ok ? '\n✅ ALL PASS' : '\n❌ FAIL');
   await b.close(); server.close();
