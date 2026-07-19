@@ -210,11 +210,13 @@ function save() {
 const CURRENCY_DEC = { CRC: 0, CLP: 0, COP: 0, USD: 2, EUR: 2, MXN: 2, PEN: 2 };
 function moneyFractionOpts() {
   const d = DB.settings.decimals;
-  let fd;
-  if (d === 0 || d === "0") fd = 0;
-  else if (d === 2 || d === "2") fd = 2;
-  else fd = CURRENCY_DEC[DB.settings.currency] ?? 2; // "auto": convención práctica de la moneda
-  return { minimumFractionDigits: fd, maximumFractionDigits: fd };
+  if (d === 0 || d === "0") return { minimumFractionDigits: 0, maximumFractionDigits: 0 };
+  if (d === 2 || d === "2") return { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+  // "auto": en monedas sin céntimos habituales (colón, peso) mostramos los
+  // céntimos SOLO cuando existen (₡1.000 limpio, ₡23.500,67 completo); en las
+  // que sí los usan (dólar, euro), siempre 2.
+  const base = CURRENCY_DEC[DB.settings.currency] ?? 2;
+  return base === 0 ? { minimumFractionDigits: 0, maximumFractionDigits: 2 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 };
 }
 function money(n) {
   const s = DB.settings;
@@ -232,7 +234,23 @@ function fmtHero(n) {
     return parts.map(p => p.type === "currency" ? `<span class="cur">${esc(p.value)}</span>` : esc(p.value)).join("");
   } catch (e) { return esc(fmt(n)); }
 }
-function parseAmount(v) { return parseFloat(String(v || "").replace(",", ".")) || 0; }
+/* Parseo de montos tolerante a la escritura local: acepta coma o punto como
+   decimal y separadores de miles (ej. "23.500,67", "23,500.67", "23500,67",
+   "1.000"). Elige el decimal por el separador más a la derecha; un separador
+   solitario que forma grupos de 3 (ej. "1.000") se trata como miles. */
+function parseAmount(v) {
+  let s = String(v == null ? "" : v).trim().replace(/[^\d.,-]/g, "");
+  if (!s) return 0;
+  const c = s.lastIndexOf(","), d = s.lastIndexOf(".");
+  let dec = "";
+  if (c > -1 && d > -1) dec = c > d ? "," : ".";
+  else if (c > -1) dec = /^-?\d{1,3}(,\d{3})+$/.test(s) ? "" : ",";
+  else if (d > -1) dec = /^-?\d{1,3}(\.\d{3})+$/.test(s) ? "" : ".";
+  if (dec) { s = s.split(dec === "," ? "." : ",").join("").replace(dec, "."); }
+  else { s = s.replace(/[.,]/g, ""); }
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
+}
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -1351,7 +1369,7 @@ SCREENS.settings = () => {
         <button data-d="0" class="${String(s.decimals) === "0" ? "on" : ""}">Sin decimales</button>
         <button data-d="2" class="${String(s.decimals) === "2" ? "on" : ""}">2 decimales</button>
       </div>
-      <div class="hint">Automático usa lo habitual de tu moneda (el colón no suele usar decimales; el dólar y el euro sí, con centavos).</div>
+      <div class="hint">Automático muestra los céntimos solo cuando existen (₡1.000 se ve limpio; ₡23.500,67 se ve completo). "2 decimales" los muestra siempre; "Sin decimales" los oculta. En cualquier modo puedes escribir céntimos al registrar.</div>
     </div>
 
     <div class="card">
@@ -1655,10 +1673,10 @@ function openTx(type, editId) {
   openSheet(`
     <h2>${editing ? "Editar movimiento" : isIncome ? "Registrar ingreso" : "Registrar gasto"}</h2>
     <label class="field"><span>Monto${isIncome ? " (bruto)" : ""}</span>
-      <input type="number" id="tx-amt" inputmode="decimal" placeholder="0" value="${editing ? initGross : ""}" /></label>
+      <input type="text" id="tx-amt" inputmode="decimal" placeholder="0" value="${editing ? initGross : ""}" /></label>
     ${isIncome ? `
     <label class="field"><span>Rebaja o deducción (opcional)</span>
-      <input type="number" id="tx-ded" inputmode="decimal" placeholder="0" value="${initDed || ""}" /></label>
+      <input type="text" id="tx-ded" inputmode="decimal" placeholder="0" value="${initDed || ""}" /></label>
     <label class="field"><span>Motivo de la rebaja (opcional)</span>
       <input type="text" id="tx-ded-note" placeholder="Ej. préstamo, ausencia, adelanto" value="${editing && editing.deductionNote ? esc(editing.deductionNote) : ""}" /></label>
     <div class="hint" id="tx-ded-info" style="margin:2px 2px 6px"></div>
@@ -1690,7 +1708,7 @@ function openTx(type, editId) {
     sel.account = b.dataset.a;
     $$("#tx-accs button").forEach(x => x.classList.toggle("on", x === b));
   });
-  const numOf = el => parseFloat(((el && el.value) || "").replace(",", ".")) || 0;
+  const numOf = el => parseAmount(el && el.value);
   if (isIncome) {
     const g = $("#tx-amt"), dd = $("#tx-ded"), info = $("#tx-ded-info");
     const drawDed = () => {
@@ -1807,7 +1825,7 @@ function openBudgets() {
     <div class="card">
       ${DB.categories.expense.map(c => `
         <label class="field bud-field"><span><i class="cdot" style="background:${catColor(c, "expense")}"></i>${esc(c)}</span>
-          <input type="number" data-bud="${esc(c)}" inputmode="decimal" placeholder="0" value="${DB.budgets[c] || ""}" /></label>
+          <input type="text" data-bud="${esc(c)}" inputmode="decimal" placeholder="0" value="${DB.budgets[c] || ""}" /></label>
       `).join("")}
     </div>
     <button class="btn" id="bud-save">Guardar presupuestos</button>
@@ -1873,7 +1891,7 @@ function openRecurring() {
         <h2>Nuevo fijo</h2>
         <div class="seg" id="rec-type"><button data-t="expense" class="on">Gasto</button><button data-t="income">Ingreso</button></div>
         <div class="gap"></div>
-        <label class="field"><span>Monto</span><input type="number" id="rec-amt" inputmode="decimal" placeholder="0" /></label>
+        <label class="field"><span>Monto</span><input type="text" id="rec-amt" inputmode="decimal" placeholder="0" /></label>
         <label class="field"><span>Descripción</span><input type="text" id="rec-note" placeholder="Alquiler, salario…" /></label>
         <label class="field"><span>Día del mes</span><input type="number" id="rec-day" min="1" max="31" value="1" /></label>
         ${accountsExist() ? `<div class="label">Cuenta</div>
@@ -1910,7 +1928,7 @@ function openRecurring() {
     });
     const autoEl = $("#rec-auto"); if (autoEl) autoEl.onchange = () => recAuto = autoEl.checked;
     $("#rec-add").onclick = () => {
-      const amt = parseFloat(($("#rec-amt").value || "").replace(",", ".")) || 0;
+      const amt = parseAmount($("#rec-amt").value);
       if (amt <= 0) return toast("Escribe un monto");
       const day = Math.max(1, Math.min(31, +$("#rec-day").value || 1));
       DB.recurring.push({ id: uid(), type: recType, amount: amt, category: recCat, note: $("#rec-note").value.trim(), day, account: accountsExist() ? recAcc : undefined, auto: recAuto });
@@ -1973,7 +1991,7 @@ function openTransfer(editId) {
   const sel = { from: ed ? ed.from : DB.accounts[0].id, to: ed ? ed.to : DB.accounts[1].id };
   openSheet(`
     <h2>${ed ? "Editar transferencia" : "Transferencia"}</h2>
-    <label class="field"><span>Monto</span><input type="number" id="tr-amt" inputmode="decimal" placeholder="0" value="${ed ? ed.amount : ""}" /></label>
+    <label class="field"><span>Monto</span><input type="text" id="tr-amt" inputmode="decimal" placeholder="0" value="${ed ? ed.amount : ""}" /></label>
     <div class="rangebar">
       <label class="field"><span>Fecha</span><input type="date" id="tr-date" value="${dateInputValue(ed ? ed.date : todayISO())}" /></label>
       <label class="field"><span>Hora</span><input type="time" id="tr-time" value="${timeInputValue(ed ? ed.date : todayISO())}" /></label>
@@ -1992,7 +2010,7 @@ function openTransfer(editId) {
   $$("#tr-from button").forEach(b => b.onclick = () => { sel.from = b.dataset.a; $$("#tr-from button").forEach(x => x.classList.toggle("on", x === b)); });
   $$("#tr-to button").forEach(b => b.onclick = () => { sel.to = b.dataset.a; $$("#tr-to button").forEach(x => x.classList.toggle("on", x === b)); });
   $("#tr-save").onclick = () => {
-    const amt = parseFloat(($("#tr-amt").value || "").replace(",", ".")) || 0;
+    const amt = parseAmount($("#tr-amt").value);
     if (amt <= 0) return toast("Escribe un monto");
     if (sel.from === sel.to) return toast("Elige cuentas distintas");
     const date = combineDateTime($("#tr-date").value, $("#tr-time").value);
@@ -2050,7 +2068,7 @@ function openAccounts() {
         <div class="label">Tipo</div>
         <div class="seg" id="acc-kind">${ACCOUNT_KINDS.map(k => `<button data-k="${k}" class="${ekind === k ? "on" : ""}">${k[0].toUpperCase() + k.slice(1)}</button>`).join("")}</div>
         <div class="gap"></div>
-        <label class="field"><span>Saldo inicial</span><input type="number" id="acc-open" inputmode="decimal" placeholder="0" value="${editing ? editing.opening : ""}" /></label>
+        <label class="field"><span>Saldo inicial</span><input type="text" id="acc-open" inputmode="decimal" placeholder="0" value="${editing ? editing.opening : ""}" /></label>
         <button class="btn" id="acc-add">${editing ? "Guardar cambios" : "Agregar cuenta"}</button>
         ${editing ? `<div class="gap"></div><button class="btn line" id="acc-cancel">Cancelar edición</button>` : ""}
       </div>
@@ -2124,12 +2142,12 @@ function openGoals() {
         <h2>Nueva meta</h2>
         <label class="field"><span>Nombre</span><input type="text" id="goal-name" placeholder="Ej. Fondo de emergencia" /></label>
         ${cushion().monthly > 0 ? `<button class="btn small line" id="goal-cushion" style="margin-bottom:12px">Sugerir colchón de 1 mes (${fmt(Math.round(cushion().monthly))})</button>` : ""}
-        <label class="field"><span>Monto objetivo</span><input type="number" id="goal-target" inputmode="decimal" placeholder="0" /></label>
+        <label class="field"><span>Monto objetivo</span><input type="text" id="goal-target" inputmode="decimal" placeholder="0" /></label>
         <label class="field"><span>Fecha objetivo (opcional)</span><input type="date" id="goal-date" /></label>
         <div class="label">Quiero guardar cada</div>
         <div class="seg" id="goal-freq"><button data-v="mensual" class="on">Mes</button><button data-v="quincenal">Quincena</button></div>
         <div class="gap"></div>
-        <label class="field"><span>Ya llevas (opcional)</span><input type="number" id="goal-saved" inputmode="decimal" placeholder="0" /></label>
+        <label class="field"><span>Ya llevas (opcional)</span><input type="text" id="goal-saved" inputmode="decimal" placeholder="0" /></label>
         <button class="btn" id="goal-add">Crear meta</button>
       </div>
     `, { fullscreen: true });
@@ -2156,7 +2174,7 @@ function openGoalContribution(id, after) {
     <h2>Aporte a ${esc(g.name)}</h2>
     <div class="hint">Llevas ${fmt(g.saved || 0)} de ${fmt(g.target)} · falta ${fmt(goalRemaining(g))}.</div>
     <div class="gap"></div>
-    <label class="field"><span>¿Cuánto apartaste?</span><input type="number" id="gc-amt" inputmode="decimal" placeholder="0" /></label>
+    <label class="field"><span>¿Cuánto apartaste?</span><input type="text" id="gc-amt" inputmode="decimal" placeholder="0" /></label>
     <button class="btn" id="gc-save">Guardar aporte</button>
     <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cancelar</button>
   `);
@@ -2173,12 +2191,12 @@ function openGoalForm(id, after) {
   openSheet(`
     <h2>Editar meta</h2>
     <label class="field"><span>Nombre</span><input type="text" id="gf-name" value="${esc(g.name)}" /></label>
-    <label class="field"><span>Monto objetivo</span><input type="number" id="gf-target" inputmode="decimal" value="${g.target || ""}" /></label>
+    <label class="field"><span>Monto objetivo</span><input type="text" id="gf-target" inputmode="decimal" value="${g.target || ""}" /></label>
     <label class="field"><span>Fecha objetivo (opcional)</span><input type="date" id="gf-date" value="${g.targetDate ? dateInputValue(g.targetDate) : ""}" /></label>
     <div class="label">Quiero guardar cada</div>
     <div class="seg" id="gf-freq">${Object.entries(GOAL_FREQ).map(([k, v]) => `<button data-v="${k}" class="${freqSel === k ? "on" : ""}">${v.label}</button>`).join("")}</div>
     <div class="gap"></div>
-    <label class="field"><span>Ahorrado</span><input type="number" id="gf-saved" inputmode="decimal" value="${g.saved || 0}" /></label>
+    <label class="field"><span>Ahorrado</span><input type="text" id="gf-saved" inputmode="decimal" value="${g.saved || 0}" /></label>
     <button class="btn" id="gf-save">Guardar cambios</button>
     <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cancelar</button>
   `);
@@ -2296,11 +2314,11 @@ function openDebtForm(editId) {
     <div class="gap"></div>
     <label class="field"><span>Nombre</span><input type="text" id="d-name" placeholder="Ej. Préstamo del carro" value="${ed ? esc(ed.name) : ""}" /></label>
     <label class="field"><span>Persona o entidad (opcional)</span><input type="text" id="d-party" placeholder="Ej. Banco, Juan…" value="${ed ? esc(ed.party) : ""}" /></label>
-    <label class="field"><span>Monto</span><input type="number" id="d-principal" inputmode="decimal" placeholder="0" value="${ed ? ed.principal : ""}" /></label>
-    <label class="field"><span>Interés % (opcional)</span><input type="number" id="d-rate" inputmode="decimal" placeholder="0" value="${ed && ed.rate ? ed.rate : ""}" /></label>
+    <label class="field"><span>Monto</span><input type="text" id="d-principal" inputmode="decimal" placeholder="0" value="${ed ? ed.principal : ""}" /></label>
+    <label class="field"><span>Interés % (opcional)</span><input type="text" id="d-rate" inputmode="decimal" placeholder="0" value="${ed && ed.rate ? ed.rate : ""}" /></label>
     <div class="seg" id="d-rperiod"><button data-v="anual" class="${ratePeriod === "anual" ? "on" : ""}">Anual</button><button data-v="mensual" class="${ratePeriod === "mensual" ? "on" : ""}">Mensual</button></div>
     <div class="gap"></div>
-    <label class="field"><span>Cuota / pago mensual (opcional)</span><input type="number" id="d-monthly" inputmode="decimal" placeholder="0" value="${ed && ed.monthly ? ed.monthly : ""}" /></label>
+    <label class="field"><span>Cuota / pago mensual (opcional)</span><input type="text" id="d-monthly" inputmode="decimal" placeholder="0" value="${ed && ed.monthly ? ed.monthly : ""}" /></label>
     <div id="d-proj" class="proj"></div>
     <div class="gap"></div>
     <label class="field"><span>Fecha de pago (opcional)</span><input type="date" id="d-due" value="${ed && ed.dueDate ? dateInputValue(ed.dueDate) : ""}" /></label>
@@ -2350,9 +2368,9 @@ function openDebtPayment(id, payId) {
     <h2>${editing ? "Editar pago" : (d.dir === "owe" ? "Registrar pago" : "Registrar abono")}</h2>
     <div class="hint">${esc(d.name)} · saldo ${fmt(baseBalance)}</div>
     <div class="gap"></div>
-    <label class="field"><span>Monto${d.dir === "owe" ? " pagado" : ""}</span><input type="number" id="dp-amt" inputmode="decimal" placeholder="0" value="${initAmt}" /></label>
-    <label class="field"><span>Interés${hasRate ? ` (${d.rate}% ${d.ratePeriod})` : " (si aplica)"}</span><input type="number" id="dp-int" inputmode="decimal" placeholder="0" value="${initInt || ""}" /></label>
-    <label class="field"><span>Abono a capital</span><input type="number" id="dp-cap" inputmode="decimal" placeholder="0" /></label>
+    <label class="field"><span>Monto${d.dir === "owe" ? " pagado" : ""}</span><input type="text" id="dp-amt" inputmode="decimal" placeholder="0" value="${initAmt}" /></label>
+    <label class="field"><span>Interés${hasRate ? ` (${d.rate}% ${d.ratePeriod})` : " (si aplica)"}</span><input type="text" id="dp-int" inputmode="decimal" placeholder="0" value="${initInt || ""}" /></label>
+    <label class="field"><span>Abono a capital</span><input type="text" id="dp-cap" inputmode="decimal" placeholder="0" /></label>
     <div class="hint" id="dp-note" style="margin:2px 2px 4px"></div>
     <div class="gap"></div>
     <label class="field"><span>Fecha</span><input type="date" id="dp-date" value="${editing ? dateInputValue(editing.date) : dateInputValue(todayISO())}" /></label>
@@ -2545,7 +2563,7 @@ function openSimulator() {
     <h2>¿Puedo comprarlo? <button class="help" id="sim-help-btn" aria-label="Cómo funciona">?</button></h2>
     <p class="hint">Escribe cuánto cuesta y te muestro cómo afecta tu mes y tus metas, usando tu propio historial.</p>
     <div class="help-inline" id="sim-help" hidden>${SIM_HELP_HTML}</div>
-    <label class="field"><span>¿Cuánto cuesta?</span><input type="number" id="sim-amt" inputmode="decimal" placeholder="0" /></label>
+    <label class="field"><span>¿Cuánto cuesta?</span><input type="text" id="sim-amt" inputmode="decimal" placeholder="0" /></label>
     <label class="field"><span>¿Qué es? (opcional)</span><input type="text" id="sim-note" placeholder="Ej. audífonos, suscripción…" /></label>
     <div class="label">Frecuencia</div>
     <div class="seg" id="sim-freq"><button data-f="once" class="on">Una vez</button><button data-f="month">Cada mes</button></div>
@@ -2992,7 +3010,7 @@ function drawReconUpload() {
         <option value="mdy" ${reconState.map.dfmt === "mdy" ? "selected" : ""}>MM/DD/AAAA</option>
       </select></label>
       <div class="gap"></div>
-      <label class="field"><span>Saldo actual según el banco (opcional)</span><input type="number" id="rc-bal" inputmode="decimal" placeholder="0" value="${reconState.bankBalance != null ? reconState.bankBalance : ""}" /></label>
+      <label class="field"><span>Saldo actual según el banco (opcional)</span><input type="text" id="rc-bal" inputmode="decimal" placeholder="0" value="${reconState.bankBalance != null ? reconState.bankBalance : ""}" /></label>
       <div class="hint">${reconState.bankBalance != null ? "Lo tomé del estado de cuenta. " : ""}Con esto ajusto tu cuenta al final para que calce exacto con el banco.</div>
       <div class="gap"></div>
       <button class="btn" id="rc-run">Conciliar</button>
