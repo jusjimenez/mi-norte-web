@@ -1459,35 +1459,48 @@ WIRE.settings = (root) => {
   };
   $("#s-reset", root).onclick = openResetOptions;
 };
-/* Borrado con opciones: solo el historial de movimientos (conservando cuentas,
-   deudas, metas, presupuestos) o todo. Antes era un único "borrar todo". */
+/* Borrado personalizado: marcas qué reiniciar y qué conservar. Cada cosa es
+   independiente (ej. reiniciar deudas y conservar movimientos, o al revés). */
+const RESET_ITEMS = [
+  ["mov", "Movimientos", "Historial de ingresos y gastos"],
+  ["debts", "Deudas y préstamos", "Saldos, pagos y recordatorios"],
+  ["goals", "Metas de ahorro", ""],
+  ["budgets", "Presupuestos", ""],
+  ["recurring", "Movimientos fijos", ""],
+  ["accounts", "Cuentas y saldos", "Borra las cuentas (y también los movimientos)"],
+];
 function openResetOptions() {
   openSheet(`
-    <h2>Borrar datos</h2>
-    <p class="hint">Elige qué borrar. No se puede deshacer, así que si tienes dudas exporta un respaldo antes.</p>
-    <div class="card">
-      <button class="btn line" id="rs-mov">Borrar solo los movimientos</button>
-      <div class="hint" style="margin-top:8px">Borra tu historial de ingresos y gastos. Tus cuentas conservan el saldo actual, y tus <b>deudas y préstamos</b>, metas, presupuestos y categorías quedan intactos.</div>
+    <h2>Borrar o reiniciar datos</h2>
+    <p class="hint">Marca lo que quieres borrar. Lo que no marques se conserva. No se puede deshacer, así que exporta un respaldo si tienes dudas.</p>
+    <div class="card reset-list">
+      ${RESET_ITEMS.map(([k, name, desc]) => `
+        <div class="switch-row"><div><strong>${name}</strong>${desc ? `<div class="hint" style="margin-top:1px">${desc}</div>` : ""}</div>
+          <label class="switch"><input type="checkbox" id="rs-${k}" ${k === "mov" ? "checked" : ""} /><span class="sl"></span></label></div>`).join("")}
     </div>
-    <div class="card">
-      <button class="btn soft-danger" id="rs-all">Borrar todos los datos</button>
-      <div class="hint" style="margin-top:8px">Borra todo y deja la app como recién instalada.</div>
-    </div>
+    <button class="btn soft-danger" id="rs-apply">Borrar lo seleccionado</button>
     <div class="gap"></div><button class="btn line" onclick="closeSheet()">Cancelar</button>
   `);
-  $("#rs-mov").onclick = () => {
-    if (!confirm("¿Borrar solo los movimientos? Tus saldos, deudas y préstamos se conservan.")) return;
-    // Preservar el saldo actual como nuevo saldo inicial: el dinero no cambia,
-    // solo se limpia el historial.
-    DB.accounts.forEach(a => { a.opening = accountBalance(a.id); });
-    DB.transactions = [];
-    // Los pagos de deuda viven en la deuda; solo soltamos el vínculo al movimiento borrado.
-    DB.debts.forEach(d => (d.payments || []).forEach(p => { p.txId = undefined; }));
-    save(); closeSheet(); render(); toast("Movimientos borrados");
-  };
-  $("#rs-all").onclick = () => {
-    if (!confirm("¿Borrar TODOS los datos? Esto no se puede deshacer.")) return;
-    DB = structuredClone(SEED); save(); closeSheet(); render(); toast("Datos borrados");
+  // Borrar cuentas implica borrar movimientos (si no, quedarían huérfanos).
+  const accEl = $("#rs-accounts"), movEl = $("#rs-mov");
+  if (accEl) accEl.onchange = () => { if (accEl.checked) { movEl.checked = true; movEl.disabled = true; } else { movEl.disabled = false; } };
+  $("#rs-apply").onclick = () => {
+    const on = k => { const el = $(`#rs-${k}`); return !!(el && el.checked); };
+    const keys = RESET_ITEMS.map(i => i[0]);
+    if (!keys.some(on)) return toast("Marca al menos una cosa");
+    if (!confirm("¿Borrar lo seleccionado? Esto no se puede deshacer.")) return;
+    const wipeAcc = on("accounts");
+    const wipeMov = on("mov") || wipeAcc;
+    // Si limpias movimientos pero conservas cuentas, el saldo actual se conserva
+    // (pasa a ser el saldo inicial). Hay que calcularlo ANTES de borrar.
+    if (wipeMov && !wipeAcc) DB.accounts.forEach(a => { a.opening = accountBalance(a.id); });
+    if (wipeMov) { DB.transactions = []; DB.debts.forEach(d => (d.payments || []).forEach(p => { p.txId = undefined; })); }
+    if (wipeAcc) DB.accounts = [];
+    if (on("debts")) DB.debts = [];
+    if (on("goals")) DB.goals = [];
+    if (on("budgets")) DB.budgets = {};
+    if (on("recurring")) DB.recurring = [];
+    save(); closeSheet(); render(); toast("Listo, datos borrados");
   };
 }
 

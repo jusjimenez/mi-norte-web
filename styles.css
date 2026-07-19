@@ -350,6 +350,9 @@ ul.clean li.row span { display: flex; align-items: center; gap: 10px; }
 /* Fila con interruptor (etiqueta + switch) */
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; }
 .switch-row > span { font-size: 15px; font-weight: 500; }
+.reset-list .switch-row { padding: 11px 0; }
+.reset-list .switch-row + .switch-row { border-top: 1px solid var(--sep); }
+.reset-list .switch-row strong { font-size: 15px; font-weight: 600; }
 
 /* Simulador de compra */
 .sim-cta { margin-bottom: 16px; }
