@@ -5,7 +5,7 @@
 
 const STORE_KEY = "mi_norte_data_v2";
 const OLD_KEY   = "mi_norte_data_v1";
-const APP_VERSION = "v49"; // debe coincidir con el CACHE del service worker
+const APP_VERSION = "v50"; // debe coincidir con el CACHE del service worker
 
 /* ---------- Catálogos por defecto ---------- */
 const DEFAULT_CATEGORIES = {
@@ -251,6 +251,16 @@ function parseAmount(v) {
   else { s = s.replace(/[.,]/g, ""); }
   const n = parseFloat(s);
   return Number.isFinite(n) ? n : 0;
+}
+/* Pago copiado por la automatización de Atajos (Apple Pay):
+   formato "MINORTE|monto|comercio". El monto puede venir formateado
+   (₡1.500,75) — parseAmount lo entiende. */
+function parseSharedPayment(text) {
+  const m = String(text || "").trim().match(/^MINORTE\|([^|]+)\|?(.*)$/i);
+  if (!m) return null;
+  const amount = parseAmount(m[1]);
+  if (amount <= 0) return null;
+  return { amount, note: (m[2] || "").trim().slice(0, 60) };
 }
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -913,6 +923,7 @@ SCREENS.home = () => {
       <button class="btn ghost" id="h-income">+ Ingreso</button>
     </div>
     <button class="btn line sim-cta" id="h-sim">🧮 ¿Puedo permitirme una compra?</button>
+    ${navigator.clipboard && navigator.clipboard.readText ? `<button class="btn line" id="h-paste">📋 Registrar pago copiado</button>` : ""}
 
     ${(budgets.length || DB.goals.length || DB.debts.length) ? `<div class="section-title">Seguimiento</div>` : ""}
     ${budgets.length ? `
@@ -1053,6 +1064,15 @@ WIRE.home = (root) => {
   const pr = $("#pend-rem", root); if (pr) pr.onclick = openUpcoming;
   const br = $("#backup-rem", root); if (br) br.onclick = () => { currentTab = "settings"; render(); };
   $("#h-sim", root).onclick = openSimulator;
+  const hp = $("#h-paste", root);
+  if (hp) hp.onclick = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const p = parseSharedPayment(text);
+      if (p) openTx("expense", null, p);
+      else toast("No encontré un pago copiado. Usa la automatización de Atajos.");
+    } catch (e) { toast("No pude leer el portapapeles"); }
+  };
   wireTxRows(root);
 };
 
@@ -1663,18 +1683,21 @@ function openHelp(key) {
 }
 
 /* ---- Registrar movimiento (ingreso o gasto) ---- */
-function openTx(type, editId) {
+/* prefill {amount, note}: pre-llenado desde un pago copiado (Atajos/Apple Pay)
+   o desde la URL (?monto=…&nota=…). Solo aplica al crear, no al editar. */
+function openTx(type, editId, prefill) {
   const editing = editId ? DB.transactions.find(t => t.id === editId) : null;
   const isIncome = editing ? editing.type === "income" : type === "income";
   const cats = DB.categories[isIncome ? "income" : "expense"];
   const sel = { category: editing ? editing.category : cats[0], account: editing ? editing.account : (DB.accounts[0] && DB.accounts[0].id) };
 
   const initDed = editing && editing.deduction > 0 ? editing.deduction : 0;
-  const initGross = editing ? (editing.amount || 0) + initDed : "";
+  const initGross = editing ? (editing.amount || 0) + initDed : (prefill && prefill.amount > 0 ? prefill.amount : "");
+  const initNote = editing ? editing.note : (prefill && prefill.note ? prefill.note : "");
   openSheet(`
     <h2>${editing ? "Editar movimiento" : isIncome ? "Registrar ingreso" : "Registrar gasto"}</h2>
     <label class="field"><span>Monto${isIncome ? " (bruto)" : ""}</span>
-      <input type="text" id="tx-amt" inputmode="decimal" placeholder="0" value="${editing ? initGross : ""}" /></label>
+      <input type="text" id="tx-amt" inputmode="decimal" placeholder="0" value="${initGross}" /></label>
     ${isIncome ? `
     <label class="field"><span>Rebaja o deducción (opcional)</span>
       <input type="text" id="tx-ded" inputmode="decimal" placeholder="0" value="${initDed || ""}" /></label>
@@ -1683,7 +1706,7 @@ function openTx(type, editId) {
     <div class="hint" id="tx-ded-info" style="margin:2px 2px 6px"></div>
     ` : ""}
     <label class="field"><span>Descripción (opcional)</span>
-      <input type="text" id="tx-note" placeholder="${isIncome ? "Salario, venta…" : "¿En qué?"}" value="${editing ? esc(editing.note) : ""}" /></label>
+      <input type="text" id="tx-note" placeholder="${isIncome ? "Salario, venta…" : "¿En qué?"}" value="${esc(initNote)}" /></label>
     <div class="rangebar">
       <label class="field"><span>Fecha</span><input type="date" id="tx-date" value="${dateInputValue(editing ? editing.date : todayISO())}" /></label>
       <label class="field"><span>Hora</span><input type="time" id="tx-time" value="${timeInputValue(editing ? editing.date : todayISO())}" /></label>
@@ -3258,6 +3281,20 @@ maybeApplyRecurring();
 render();
 showLock();
 maybeShowGate();
+/* Apertura con datos en la URL (?monto=…&nota=…): pre-llena un gasto.
+   Útil para automatizaciones (Atajos con "Abrir URL"). Limpiamos la URL para
+   que un refresco no re-abra el formulario. */
+(function () {
+  try {
+    const q = new URLSearchParams(location.search);
+    const monto = q.get("monto") || q.get("amount");
+    if (!monto) return;
+    const nota = (q.get("nota") || q.get("comercio") || q.get("note") || "").slice(0, 60);
+    history.replaceState(null, "", location.pathname);
+    const amount = parseAmount(monto);
+    if (amount > 0) setTimeout(() => openTx("expense", null, { amount, note: nota }), 80);
+  } catch (e) {}
+})();
 /* Si el tema es "auto", seguir los cambios del sistema en vivo. */
 if (window.matchMedia) {
   const mq = window.matchMedia("(prefers-color-scheme: light)");
