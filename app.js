@@ -5,7 +5,7 @@
 
 const STORE_KEY = "mi_norte_data_v2";
 const OLD_KEY   = "mi_norte_data_v1";
-const APP_VERSION = "v51"; // debe coincidir con el CACHE del service worker
+const APP_VERSION = "v52"; // debe coincidir con el CACHE del service worker
 
 /* ---------- Catálogos por defecto ---------- */
 const DEFAULT_CATEGORIES = {
@@ -260,13 +260,22 @@ function parseAmount(v) {
 function parseSharedPayment(text) {
   const m = String(text || "").trim().match(/^MINORTE\|([\s\S]*)$/i);
   if (!m) return null;
-  const payload = m[1].trim();
+  let payload = m[1].trim();
   if (!payload) return null;
-  // 1) monto|comercio
+  // Fecha/hora opcional (ISO 8601, ej. 2026-07-20T16:52:00): se extrae de
+  // cualquier parte del texto y se quita antes de buscar el monto, para que
+  // sus números no se confundan con un importe.
+  let date = "";
+  const dm = payload.match(/\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?/);
+  if (dm && !isNaN(new Date(dm[0].replace(" ", "T")))) {
+    date = dm[0].replace(" ", "T");
+    payload = payload.replace(dm[0], " ").trim();
+  }
+  // 1) monto|comercio (solo si la primera parte es realmente un número)
   const parts = payload.split("|");
-  if (parts.length >= 2) {
+  if (parts.length >= 2 && /^[\s₡$]*[\d.,]+\s*(?:CRC|USD)?\s*$/i.test(parts[0])) {
     const amount = parseAmount(parts[0]);
-    if (amount > 0) return { amount, note: parts.slice(1).join(" ").trim().slice(0, 60) };
+    if (amount > 0) return { amount, note: parts.slice(1).join(" ").trim().slice(0, 60), date };
   }
   // 2) texto libre: elegir el mejor candidato a monto (con moneda > con decimales > primero)
   const rx = /(?:₡|\$|CRC|USD)?\s*(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)/g;
@@ -282,7 +291,7 @@ function parseSharedPayment(text) {
   if (amount <= 0) return null;
   const note = (payload.slice(0, best.idx) + " " + payload.slice(best.idx + best.raw.length))
     .replace(/[|·\n\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
-  return { amount, note };
+  return { amount, note, date };
 }
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -1716,6 +1725,8 @@ function openTx(type, editId, prefill) {
   const initDed = editing && editing.deduction > 0 ? editing.deduction : 0;
   const initGross = editing ? (editing.amount || 0) + initDed : (prefill && prefill.amount > 0 ? prefill.amount : "");
   const initNote = editing ? editing.note : (prefill && prefill.note ? prefill.note : "");
+  const initWhen = editing ? editing.date
+    : (prefill && prefill.date && !isNaN(new Date(prefill.date)) ? new Date(prefill.date).toISOString() : todayISO());
   openSheet(`
     <h2>${editing ? "Editar movimiento" : isIncome ? "Registrar ingreso" : "Registrar gasto"}</h2>
     <label class="field"><span>Monto${isIncome ? " (bruto)" : ""}</span>
@@ -1730,8 +1741,8 @@ function openTx(type, editId, prefill) {
     <label class="field"><span>Descripción (opcional)</span>
       <input type="text" id="tx-note" placeholder="${isIncome ? "Salario, venta…" : "¿En qué?"}" value="${esc(initNote)}" /></label>
     <div class="rangebar">
-      <label class="field"><span>Fecha</span><input type="date" id="tx-date" value="${dateInputValue(editing ? editing.date : todayISO())}" /></label>
-      <label class="field"><span>Hora</span><input type="time" id="tx-time" value="${timeInputValue(editing ? editing.date : todayISO())}" /></label>
+      <label class="field"><span>Fecha</span><input type="date" id="tx-date" value="${dateInputValue(initWhen)}" /></label>
+      <label class="field"><span>Hora</span><input type="time" id="tx-time" value="${timeInputValue(initWhen)}" /></label>
     </div>
     <label class="field"><span>N.° de comprobante / referencia (opcional)</span>
       <input type="text" id="tx-ref" placeholder="Ej. factura 00123" value="${editing ? esc(editing.ref) : ""}" /></label>
@@ -3312,9 +3323,10 @@ maybeShowGate();
     const monto = q.get("monto") || q.get("amount");
     if (!monto) return;
     const nota = (q.get("nota") || q.get("comercio") || q.get("note") || "").slice(0, 60);
+    const fecha = q.get("fecha") || q.get("date") || "";
     history.replaceState(null, "", location.pathname);
     const amount = parseAmount(monto);
-    if (amount > 0) setTimeout(() => openTx("expense", null, { amount, note: nota }), 80);
+    if (amount > 0) setTimeout(() => openTx("expense", null, { amount, note: nota, date: fecha }), 80);
   } catch (e) {}
 })();
 /* Si el tema es "auto", seguir los cambios del sistema en vivo. */

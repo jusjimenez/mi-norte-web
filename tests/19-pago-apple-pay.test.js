@@ -23,7 +23,6 @@ const server = http.createServer((q, s) => {
   page.on('pageerror', e => errs.push(e.message));
 
   const seed = () => {
-    Date.prototype.getHours = function () { return 12; };
     localStorage.setItem('mi_norte_data_v2', JSON.stringify({
       settings: { currency: 'CRC', decimals: 'auto', locale: 'es-CR', gate: false },
       accounts: [{ id: 'a1', name: 'BAC', kind: 'banco', opening: 100000 }],
@@ -54,9 +53,21 @@ const server = http.createServer((q, s) => {
     free1: parseSharedPayment('MINORTE|AUTOMERCADO ₡5.200,00'),
     free2: parseSharedPayment('MINORTE|₡1.500,75\nStarbucks San José'),
     free3: parseSharedPayment('MINORTE|AM PM 24 CRC 3.000,00'),
-    free4: parseSharedPayment('MINORTE|Uber 2500')
+    free4: parseSharedPayment('MINORTE|Uber 2500'),
+    // con fecha/hora ISO al final (la fecha no se confunde con el monto)
+    fecha1: parseSharedPayment('MINORTE|AUTOMERCADO ₡5.200,00|2026-07-20T16:52:00'),
+    fecha2: parseSharedPayment('MINORTE|Uber 2500 2026-07-20 16:52')
   }));
   console.log('parser:', JSON.stringify(P));
+
+  // pre-llenado de fecha/hora en el formulario
+  const F = await page.evaluate(() => {
+    closeSheet();
+    openTx('expense', null, { amount: 5200, note: 'AUTOMERCADO', date: '2026-07-20T16:52:00' });
+    return { d: document.getElementById('tx-date').value, t: document.getElementById('tx-time').value };
+  });
+  console.log('form fecha/hora:', JSON.stringify(F));
+  await page.evaluate(() => closeSheet());
 
   // (2) apertura por URL
   const p2 = await ctx.newPage();
@@ -75,6 +86,9 @@ const server = http.createServer((q, s) => {
     P.free2 && P.free2.amount === 1500.75 && /Starbucks/.test(P.free2.note) &&
     P.free3 && P.free3.amount === 3000 && /AM PM/.test(P.free3.note) &&
     P.free4 && P.free4.amount === 2500 && /Uber/.test(P.free4.note) &&
+    P.fecha1 && P.fecha1.amount === 5200 && /AUTOMERCADO/.test(P.fecha1.note) && P.fecha1.date.startsWith('2026-07-20') &&
+    P.fecha2 && P.fecha2.amount === 2500 && /Uber/.test(P.fecha2.note) && P.fecha2.date.startsWith('2026-07-20') &&
+    F.d === '2026-07-20' && F.t === '16:52' &&
     +B.amt.replace(',', '.') === 8500.5 && B.note === 'Farmacia' && B.url === '';
   console.log('\nERRORS:', errs.length ? errs : 'none');
   console.log(ok ? '\n✅ ALL PASS' : '\n❌ FAIL');
