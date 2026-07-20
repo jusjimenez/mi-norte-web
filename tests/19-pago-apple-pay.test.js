@@ -49,7 +49,12 @@ const server = http.createServer((q, s) => {
   // parser: formatos inválidos no disparan
   const P = await page.evaluate(() => ({
     bad1: parseSharedPayment('hola mundo'), bad2: parseSharedPayment('MINORTE|abc|x'),
-    ok: parseSharedPayment('minorte|2000|Uber')
+    ok: parseSharedPayment('minorte|2000|Uber'),
+    // transacción entera como texto (sin poder separar importe/comercio en Atajos)
+    free1: parseSharedPayment('MINORTE|AUTOMERCADO ₡5.200,00'),
+    free2: parseSharedPayment('MINORTE|₡1.500,75\nStarbucks San José'),
+    free3: parseSharedPayment('MINORTE|AM PM 24 CRC 3.000,00'),
+    free4: parseSharedPayment('MINORTE|Uber 2500')
   }));
   console.log('parser:', JSON.stringify(P));
 
@@ -66,6 +71,10 @@ const server = http.createServer((q, s) => {
     +A.amt === 1500.75 && A.note === 'Starbucks' && /gasto/i.test(A.title) &&
     Asaved.amount === 1500.75 && Asaved.note === 'Starbucks' && Asaved.type === 'expense' &&
     P.bad1 === null && P.bad2 === null && P.ok && P.ok.amount === 2000 && P.ok.note === 'Uber' &&
+    P.free1 && P.free1.amount === 5200 && /AUTOMERCADO/.test(P.free1.note) &&
+    P.free2 && P.free2.amount === 1500.75 && /Starbucks/.test(P.free2.note) &&
+    P.free3 && P.free3.amount === 3000 && /AM PM/.test(P.free3.note) &&
+    P.free4 && P.free4.amount === 2500 && /Uber/.test(P.free4.note) &&
     +B.amt.replace(',', '.') === 8500.5 && B.note === 'Farmacia' && B.url === '';
   console.log('\nERRORS:', errs.length ? errs : 'none');
   console.log(ok ? '\n✅ ALL PASS' : '\n❌ FAIL');

@@ -5,7 +5,7 @@
 
 const STORE_KEY = "mi_norte_data_v2";
 const OLD_KEY   = "mi_norte_data_v1";
-const APP_VERSION = "v50"; // debe coincidir con el CACHE del service worker
+const APP_VERSION = "v51"; // debe coincidir con el CACHE del service worker
 
 /* ---------- Catálogos por defecto ---------- */
 const DEFAULT_CATEGORIES = {
@@ -252,15 +252,37 @@ function parseAmount(v) {
   const n = parseFloat(s);
   return Number.isFinite(n) ? n : 0;
 }
-/* Pago copiado por la automatización de Atajos (Apple Pay):
-   formato "MINORTE|monto|comercio". El monto puede venir formateado
-   (₡1.500,75) — parseAmount lo entiende. */
+/* Pago copiado por la automatización de Atajos (Apple Pay).
+   Formato ideal: "MINORTE|monto|comercio". Pero iOS a veces no deja separar
+   el importe y el comercio, así que también aceptamos "MINORTE|<transacción
+   entera como texto>": buscamos el primer número con pinta de monto (símbolo
+   de moneda o decimales) y el resto queda como comercio. */
 function parseSharedPayment(text) {
-  const m = String(text || "").trim().match(/^MINORTE\|([^|]+)\|?(.*)$/i);
+  const m = String(text || "").trim().match(/^MINORTE\|([\s\S]*)$/i);
   if (!m) return null;
-  const amount = parseAmount(m[1]);
+  const payload = m[1].trim();
+  if (!payload) return null;
+  // 1) monto|comercio
+  const parts = payload.split("|");
+  if (parts.length >= 2) {
+    const amount = parseAmount(parts[0]);
+    if (amount > 0) return { amount, note: parts.slice(1).join(" ").trim().slice(0, 60) };
+  }
+  // 2) texto libre: elegir el mejor candidato a monto (con moneda > con decimales > primero)
+  const rx = /(?:₡|\$|CRC|USD)?\s*(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)/g;
+  let best = null, mt;
+  while ((mt = rx.exec(payload))) {
+    const cand = { raw: mt[0], num: mt[1], idx: mt.index,
+      hasCur: /₡|\$|CRC|USD/.test(mt[0]), hasDec: /[.,]\d{1,2}$/.test(mt[1]) };
+    if (!best || (cand.hasCur && !best.hasCur) || (cand.hasCur === best.hasCur && cand.hasDec && !best.hasDec)) best = cand;
+    if (best.hasCur && best.hasDec) break;
+  }
+  if (!best) return null;
+  const amount = parseAmount(best.num);
   if (amount <= 0) return null;
-  return { amount, note: (m[2] || "").trim().slice(0, 60) };
+  const note = (payload.slice(0, best.idx) + " " + payload.slice(best.idx + best.raw.length))
+    .replace(/[|·\n\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
+  return { amount, note };
 }
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
 const $ = (sel, root = document) => root.querySelector(sel);
