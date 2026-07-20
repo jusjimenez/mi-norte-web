@@ -5,6 +5,7 @@
 
 const STORE_KEY = "mi_norte_data_v2";
 const OLD_KEY   = "mi_norte_data_v1";
+const APP_VERSION = "v49"; // debe coincidir con el CACHE del service worker
 
 /* ---------- Catálogos por defecto ---------- */
 const DEFAULT_CATEGORIES = {
@@ -1429,7 +1430,7 @@ SCREENS.settings = () => {
       <input type="file" id="s-import-file" accept="application/json,.json" hidden />
     </div>
 
-    <div class="center hint">MI NORTE · Finanzas personales · versión web</div>
+    <div class="center hint">MI NORTE · Finanzas personales · ${APP_VERSION}</div>
   `;
 };
 WIRE.settings = (root) => {
