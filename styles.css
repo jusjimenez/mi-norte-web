@@ -354,6 +354,18 @@ ul.clean li.row span { display: flex; align-items: center; gap: 10px; }
 .reset-list .switch-row + .switch-row { border-top: 1px solid var(--sep); }
 .reset-list .switch-row strong { font-size: 15px; font-weight: 600; }
 
+/* Burbuja flotante: registrar pago copiado (visible al abrir, en toda pestaña) */
+.paste-fab {
+  position: fixed; top: calc(var(--safe-top) + 10px); right: 14px; z-index: 55;
+  width: 44px; height: 44px; border-radius: 50%;
+  border: 1px solid var(--hairline); background: var(--elev); color: var(--label);
+  -webkit-backdrop-filter: saturate(160%) blur(16px); backdrop-filter: saturate(160%) blur(16px);
+  font-size: 20px; line-height: 1; cursor: pointer; padding: 0;
+  box-shadow: 0 6px 18px -8px rgba(0,0,0,.55);
+  transition: transform .1s ease, opacity .15s;
+}
+.paste-fab:active { transform: scale(.92); }
+
 /* Simulador de compra */
 .sim-cta { margin-bottom: 16px; }
 .pill.big { font-size: 16px; padding: 9px 20px; font-weight: 700; }

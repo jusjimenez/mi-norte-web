@@ -34,9 +34,10 @@ const server = http.createServer((q, s) => {
   // (1) botón "Registrar pago copiado"
   await page.goto(`http://localhost:${port}/index.html`);
   await page.waitForFunction(() => document.querySelector('#screen') && document.querySelector('#screen').children.length > 0);
-  const hasBtn = await page.evaluate(() => !!document.getElementById('h-paste'));
+  // la burbuja flotante está visible apenas abre (no oculta, en cualquier pestaña)
+  const hasBtn = await page.evaluate(() => { const f = document.getElementById('paste-fab'); return !!f && !f.hidden; });
   await page.evaluate(() => navigator.clipboard.writeText('MINORTE|₡1.500,75|Starbucks'));
-  await page.click('#h-paste');
+  await page.click('#paste-fab');
   await page.waitForSelector('#tx-amt');
   const A = await page.evaluate(() => ({ amt: document.getElementById('tx-amt').value, note: document.getElementById('tx-note').value, title: document.querySelector('.sheet h2').textContent }));
   console.log('clipboard:', 'btn?', hasBtn, JSON.stringify(A));
